@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="Win7App" Language="1033" Version="1.0.0.0" Manufacturer="YourCompany" UpgradeCode="{D4C3B2A1-6F5E-4712-9A8B-0C1D2E3F4A5B}">
+    <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" Platform="x86" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed."/>
+    <MediaTemplate />
+    <Feature Id="ProductFeature" Title="Win7App" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+    </Feature>
+  </Product>
+
+  <Fragment>
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLFOLDER" Name="Win7App" />
+      </Directory>
+    </Directory>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Component Id="MainExecutable" Guid="{E1F2D3C4-B5A6-4789-8A7B-0C1D2E3F4A5B}">
+        <File Source="..\Win7App\bin\Release\Win7App.exe" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

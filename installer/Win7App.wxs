@@ -1,0 +1,60 @@
+﻿<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+    <Package Name="Win7 Virtual Monitor" Language="1033" Version="1.0.0.0" Manufacturer="Win7App" UpgradeCode="A1B2C3D4-E5F6-7890-ABCD-EF1234567890" InstallerVersion="200"><SummaryInformation Description="Stream Windows 7 display to Android" Manufacturer="Win7App" />
+
+        <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." />
+        <MediaTemplate EmbedCab="yes" />
+
+        <Feature Id="ProductFeature" Title="Win7 Virtual Monitor" Level="1">
+            <ComponentGroupRef Id="ProductComponents" />
+            <ComponentRef Id="StartMenuShortcut" />
+            <ComponentRef Id="DesktopShortcut" />
+        </Feature>
+        
+        <!-- Directory Structure -->
+        
+
+        <!-- Start Menu Shortcut -->
+        <DirectoryRef Id="ApplicationProgramsFolder">
+            <Component Id="StartMenuShortcut" Guid="B2C3D4E5-F6A7-8901-BCDE-F12345678901">
+                <Shortcut Id="ApplicationStartMenuShortcut" Name="Win7 Virtual Monitor" Description="Stream Windows 7 display to Android" Target="[INSTALLFOLDER]Win7App.exe" WorkingDirectory="INSTALLFOLDER" />
+                <RemoveFolder Id="CleanUpShortCut" Directory="ApplicationProgramsFolder" On="uninstall" />
+                <RegistryValue Root="HKCU" Key="Software\Win7App\VirtualMonitor" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+            </Component>
+        </DirectoryRef>
+
+        <!-- Desktop Shortcut -->
+        <StandardDirectory Id="DesktopFolder">
+            <Component Id="DesktopShortcut" Guid="C3D4E5F6-A7B8-9012-CDEF-123456789012">
+                <Shortcut Id="ApplicationDesktopShortcut" Name="Win7 Virtual Monitor" Description="Stream Windows 7 display to Android" Target="[INSTALLFOLDER]Win7App.exe" WorkingDirectory="INSTALLFOLDER" />
+                <RegistryValue Root="HKCU" Key="Software\Win7App\VirtualMonitor" Name="desktopshortcut" Type="integer" Value="1" KeyPath="yes" />
+            </Component>
+        </StandardDirectory>
+
+        <!-- Firewall Exception -->
+        <CustomAction Id="AddFirewallRule" Directory="INSTALLFOLDER" ExeCommand="[System64Folder]netsh.exe advfirewall firewall add rule name=&quot;Win7 Virtual Monitor HTTP&quot; dir=in action=allow protocol=tcp localport=8080" Execute="deferred" Impersonate="no" Return="ignore" />
+        
+        <CustomAction Id="AddFirewallRuleHttps" Directory="INSTALLFOLDER" ExeCommand="[System64Folder]netsh.exe advfirewall firewall add rule name=&quot;Win7 Virtual Monitor HTTPS&quot; dir=in action=allow protocol=tcp localport=8081" Execute="deferred" Impersonate="no" Return="ignore" />
+
+        <InstallExecuteSequence>
+            <Custom Action="AddFirewallRule" Before="InstallFinalize" Condition="NOT Installed" />
+            <Custom Action="AddFirewallRuleHttps" Before="InstallFinalize" Condition="NOT Installed" />
+        </InstallExecuteSequence>
+
+    
+            <StandardDirectory Id="ProgramFilesFolder">
+                <Directory Id="INSTALLFOLDER" Name="Win7 Virtual Monitor" />
+            </StandardDirectory>
+            <StandardDirectory Id="ProgramMenuFolder">
+                <Directory Id="ApplicationProgramsFolder" Name="Win7 Virtual Monitor" />
+            </StandardDirectory>
+            <StandardDirectory Id="DesktopFolder" />
+        </Package>
+
+    <Fragment>
+        <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+            <Component Id="MainExecutable" Guid="D4E5F6A7-B8C9-0123-DEF0-123456789ABC">
+                <File Id="Win7AppExe" Name="Win7App.exe" Source="..\Win7App\bin\Release\Win7App.exe" KeyPath="yes" />
+            </Component>
+        </ComponentGroup>
+    </Fragment>
+</Wix>

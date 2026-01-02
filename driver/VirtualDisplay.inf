@@ -1,0 +1,60 @@
+;
+; VirtualDisplay.inf
+;
+; Installation file for the Virtual Display Driver (WDDM)
+; Compatible with Windows 7 x86
+;
+
+[Version]
+Signature="$Windows NT$"
+Class=Display
+ClassGUID={4d36e968-e325-11ce-bfc1-08002be10318}
+Provider=%ProviderString%
+DriverVer=01/01/2026, 1.0.0.0
+CatalogFile=VirtualDisplay.cat
+
+[DestinationDirs]
+DefaultDestDir = 12
+
+[SourceDisksNames]
+1 = %DiskId1%,,,""
+
+[SourceDisksFiles]
+VirtualDisplay.sys  = 1,,
+
+[Manufacturer]
+%StdMfg%=Standard,NTx86
+
+[Standard.NTx86]
+%DeviceDesc%=VirtualDisplay_Inst, Root\VirtualDisplay
+
+[VirtualDisplay_Inst]
+Include=msdv.inf
+Needs=msdv.NT
+CopyFiles=Drivers_Dir
+
+[Drivers_Dir]
+VirtualDisplay.sys
+
+[VirtualDisplay_Inst.Services]
+AddService = VirtualDisplay,0x00000002,VirtualDisplay_Service_Inst, VirtualDisplay_EventLog_Inst
+
+[VirtualDisplay_Service_Inst]
+ServiceType    = 1               ; SERVICE_KERNEL_DRIVER
+StartType      = 3               ; SERVICE_DEMAND_START
+ErrorControl   = 1               ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %12%\VirtualDisplay.sys
+LoadOrderGroup = Video
+
+[VirtualDisplay_EventLog_Inst]
+AddReg = VirtualDisplay_EventLog_AddReg
+
+[VirtualDisplay_EventLog_AddReg]
+HKR,,EventMessageFile,0x00020000,"%11%\IoLogMsg.dll;%12%\VirtualDisplay.sys"
+HKR,,TypesSupported,0x00010001,7
+
+[Strings]
+ProviderString="MyCompany"
+StdMfg="MyCompany"
+DiskId1="Virtual Display Driver Installation Disk"
+DeviceDesc="Virtual Display Device (WDDM)"

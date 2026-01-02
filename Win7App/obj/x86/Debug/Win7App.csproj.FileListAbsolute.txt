@@ -1,0 +1,5 @@
+D:\Downloads\Compressed\VSCodeProject\win7app\Win7App\obj\x86\Debug\Win7App.csprojResolveAssemblyReference.cache
+D:\Downloads\Compressed\VSCodeProject\win7app\Win7App\bin\Debug\Win7App.exe
+D:\Downloads\Compressed\VSCodeProject\win7app\Win7App\bin\Debug\Win7App.pdb
+D:\Downloads\Compressed\VSCodeProject\win7app\Win7App\obj\x86\Debug\Win7App.exe
+D:\Downloads\Compressed\VSCodeProject\win7app\Win7App\obj\x86\Debug\Win7App.pdb

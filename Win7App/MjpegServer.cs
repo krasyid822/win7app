@@ -67,6 +67,54 @@ namespace Win7App
                     _sslCert = SslCertificateHelper.GetOrCreateCertificate(LogMessageSafe);
                     if (_sslCert != null)
                     {
+                        // Log certificate info for debugging
+                        if (LogMessage != null)
+                        {
+                            LogMessage(String.Format("SSL Cert: Subject={0}, HasPrivateKey={1}, Algo={2}",
+                                _sslCert.Subject,
+                                _sslCert.HasPrivateKey,
+                                _sslCert.SignatureAlgorithm.FriendlyName));
+                        }
+
+                        // Inspect private key provider details to detect CNG vs CSP issues
+                        try
+                        {
+                            var priv = _sslCert.PrivateKey;
+                            if (priv != null)
+                            {
+                                System.Security.Cryptography.RSACryptoServiceProvider rsaCsp = priv as System.Security.Cryptography.RSACryptoServiceProvider;
+                                if (rsaCsp != null)
+                                {
+                                    var info = rsaCsp.CspKeyContainerInfo;
+                                    LogMessage(String.Format("PrivateKey: CSP Provider={0}, Container={1}, MachineKeySet={2}",
+                                        info.ProviderName, info.KeyContainerName, info.MachineKeyStore));
+                                }
+                                else
+                                {
+                                    LogMessage(String.Format("PrivateKey type: {0}", priv.GetType().FullName));
+                                    string tname = priv.GetType().Name;
+                                    if (tname != null && (tname.Contains("Cng") || tname.Contains("NCrypt")))
+                                    {
+                                        LogMessage("PrivateKey is CNG - may not work on Windows 7");
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                LogMessage("PrivateKey: null");
+                            }
+                        }
+                        catch (Exception pe)
+                        {
+                            LogMessage(String.Format("PrivateKey inspect error: {0}", pe.Message));
+                        }
+
+                        if (!_sslCert.HasPrivateKey)
+                        {
+                            if (LogMessage != null) LogMessage("WARNING: Certificate has no private key! HTTPS will fail.");
+                            if (LogMessage != null) LogMessage("Please click SSL button and choose 'NO' to regenerate certificate.");
+                        }
+
                         _httpsListener = new TcpListener(IPAddress.Any, _httpsPort);
                         _httpsListener.Start();
                         _httpsServerThread = new Thread(HttpsServerLoop);
@@ -249,20 +297,56 @@ namespace Win7App
                         SslStream sslStream = new SslStream(peekStream, false, 
                             new RemoteCertificateValidationCallback(ValidateClientCertificate));
                         
-                        // Use compatible SSL protocols for Win7
+                        // Windows 7 with .NET 4.8 supports TLS 1.2 after enabling in registry
+                        // Use TLS 1.2 as primary for modern browser compatibility
                         System.Security.Authentication.SslProtocols protocols = 
-                            System.Security.Authentication.SslProtocols.Tls | 
-                            System.Security.Authentication.SslProtocols.Tls11 | 
-                            System.Security.Authentication.SslProtocols.Tls12;
+                            System.Security.Authentication.SslProtocols.Tls12 |   // TLS 1.2 - primary (modern browsers)
+                            System.Security.Authentication.SslProtocols.Tls11 |   // TLS 1.1 - fallback 1
+                            System.Security.Authentication.SslProtocols.Tls;      // TLS 1.0 - fallback 2
                         
-                        sslStream.AuthenticateAsServer(_sslCert, false, protocols, false);
+                        sslStream.AuthenticateAsServer(_sslCert, false, protocols, false); // no CRL check
                         stream = sslStream;
                         
-                        if (LogMessage != null) LogMessage(String.Format("HTTPS client connected: {0}", client.Client.RemoteEndPoint));
+                        if (LogMessage != null) LogMessage(String.Format("HTTPS connected (TLS): {0}", client.Client.RemoteEndPoint));
                     }
                     catch (Exception sslEx)
                     {
-                        if (LogMessage != null) LogMessage(String.Format("SSL error: {0}", sslEx.Message));
+                        // Log detailed SSL error info including stacktrace and Win32 codes
+                        string errorDetail = sslEx.Message;
+                        try { errorDetail += " | ExceptionFull: " + sslEx.ToString(); } catch { }
+                        if (sslEx.InnerException != null)
+                        {
+                            try { errorDetail += " | Inner: " + sslEx.InnerException.Message; } catch { }
+                            if (sslEx.InnerException.InnerException != null)
+                            {
+                                try { errorDetail += " | Inner2: " + sslEx.InnerException.InnerException.Message; } catch { }
+                            }
+                        }
+
+                        // If inner exception is a Win32Exception, log native error code
+                        try
+                        {
+                            var w32 = sslEx as System.ComponentModel.Win32Exception;
+                            if (w32 == null && sslEx.InnerException is System.ComponentModel.Win32Exception)
+                                w32 = (System.ComponentModel.Win32Exception)sslEx.InnerException;
+                            if (w32 != null)
+                            {
+                                errorDetail += String.Format(" | Win32Error={0}", w32.NativeErrorCode);
+                            }
+                        }
+                        catch { }
+
+                        // Check certificate validity
+                        string certInfo = "No cert";
+                        if (_sslCert != null)
+                        {
+                            certInfo = String.Format("Cert: HasPK={0}, Algo={1}, Exp={2}", 
+                                _sslCert.HasPrivateKey,
+                                _sslCert.SignatureAlgorithm.FriendlyName,
+                                _sslCert.NotAfter.ToString("yyyy-MM-dd"));
+                        }
+
+                        if (LogMessage != null) LogMessage(String.Format("SSL error: {0} | {1}", errorDetail, certInfo));
                         client.Close();
                         return;
                     }
@@ -345,6 +429,10 @@ namespace Win7App
                 else if (url == "/sw.js")
                 {
                     ServeServiceWorker(writer);
+                }
+                else if (url == "/offline" || url == "/offline.html")
+                {
+                    ServeOfflinePage(writer);
                 }
                 else if (url.StartsWith("/icon-"))
                 {
@@ -454,21 +542,27 @@ namespace Win7App
         {
             string html = @"
 <!DOCTYPE html>
-<html lang='id'>
+<html lang='en'>
 <head>
     <meta charset='UTF-8'>
     <title>Win7 Virtual Monitor</title>
-    <meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover'>
     <meta name='description' content='Stream Windows 7 display to Android'>
-    <meta name='theme-color' content='#1a1a2e'>
+    <meta name='theme-color' content='#1a1a2e' media='(prefers-color-scheme: dark)'>
+    <meta name='theme-color' content='#1a1a2e' media='(prefers-color-scheme: light)'>
+    <meta name='color-scheme' content='dark'>
     <meta name='apple-mobile-web-app-capable' content='yes'>
     <meta name='apple-mobile-web-app-status-bar-style' content='black-translucent'>
     <meta name='apple-mobile-web-app-title' content='Win7VM'>
     <meta name='mobile-web-app-capable' content='yes'>
     <meta name='application-name' content='Win7VM'>
     <meta name='msapplication-TileColor' content='#1a1a2e'>
-    <link rel='manifest' href='/manifest.json'>
-    <link rel='apple-touch-icon' href='/icon-192.png'>
+    <meta name='msapplication-TileImage' content='/icon-144.png'>
+    <meta name='format-detection' content='telephone=no'>
+    <link rel='manifest' href='/manifest.json' crossorigin='use-credentials'>
+    <link rel='apple-touch-icon' sizes='180x180' href='/icon-192.png'>
+    <link rel='apple-touch-startup-image' href='/icon-512.png'>
+    <link rel='icon' type='image/png' sizes='32x32' href='/icon-48.png'>
     <link rel='icon' type='image/png' sizes='192x192' href='/icon-192.png'>
     <link rel='icon' type='image/png' sizes='512x512' href='/icon-512.png'>
     <style>
@@ -623,117 +717,211 @@ namespace Win7App
             }
         });
 
-        // Wake Lock for Stay Awake
+        // Wake Lock for Stay Awake - works on HTTP and HTTPS
         var wakeLock = null;
         var wakeLockEnabled = false;
         var noSleepVideo = null;
+        var noSleepInterval = null;
+        
+        // Create NoSleep video element
+        function createNoSleepVideo() {
+            var video = document.createElement('video');
+            video.setAttribute('playsinline', '');
+            video.setAttribute('webkit-playsinline', '');
+            video.setAttribute('muted', '');
+            video.muted = true;
+            video.loop = true;
+            video.style.cssText = 'position:fixed;left:-100px;top:-100px;width:1px;height:1px;';
+            
+            // WebM video that works better on Android
+            var webm = 'data:video/webm;base64,GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQRChYECGFOAZwH/////////FUmpZpkq17GDD0JATYCGQ2hyb21lV0GGQ2hyb21lFlSua7+uvdeBAXPFh7Z2aWR0aGV1AZJUsyuBACK1nIN1bmR1oXZpc29yQZJESTTJiEAASU1YQYCAVYBUA4BAfwEVQ7Z1c2VkgQKGcXVpdAVBc3R3YXZlbnRkbmRzAAA=';
+            // MP4 fallback
+            var mp4 = 'data:video/mp4;base64,AAAAIGZ0eXBtcDQyAAAAAG1wNDJpc29tYXZjMQAAAc1tb292AAAAbG12aGQAAAAA1NIHqtTSB6oAAAPwAAACrgABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAACN3RyYWsAAABcdGtoZAAAAAHU0geq1NIHqgAAAAEAAAAAAAKuAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAgAAAAIAAAAAACRlZHRzAAAAHGVsc3QAAAAAAAAAAQAAAq4AAAAAAAEAAAAAAa9tZGlhAAAAIG1kaGQAAAAA1NIHqtTSB6oAAAAeAAAAHgVXAAAAAAAtaGRscgAAAAAAAAAAdmlkZQAAAAAAAAAAAAAAAFZpZGVvSGFuZGxlcgAAAAFabWluZgAAABR2bWhkAAAAAQAAAAAAAAAAAAAAJGRpbmYAAAAcZHJlZgAAAAAAAAABAAAADHVybCAAAAABAAAAGnN0YmwAAACuc3RzZAAAAAAAAAABAAAAnmF2YzEAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAACAAIASAAAAEgAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABj//wAAADRhdmNDAWQACv/hABdnZAAKrNlBsJaEAAADAAQAAAMACg8WLZYBAAVo6+PLIsAAAAAYc3R0cwAAAAAAAAABAAAADwAAB9AAAAAUCHN0c3MAAAAAAAAAAQAAAAEAAABIY3R0cwAAAAAAAAAPAAAAAQAAD6ABAAAAFHNkdHAAAAAAIBAQGBAAAAAcc3RzYwAAAAAAAAABAAAAAQAAAA8AAAABAAAARHNaegAAAAAAAAAAAAAPAAADMgAAAAsAAAALAAAACwAAAAsAAAALAAAACwAAAAsAAAALAAAACwAAAAsAAAALAAAACwAAAAsAAAAUc3RjbwAAAAAAAAABAAAAMAAAAGJ1ZHRhAAAAWm1ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAG1kaXJhcHBsAAAAAAAAAAAAAAAALGlsc3QAAAAkqXRvbwAAABxkYXRhAAAAAQAAAABMYXZmNTguNzYuMTAw';
+            
+            // Try WebM first (better for Android), fallback to MP4
+            video.src = webm;
+            video.addEventListener('error', function() {
+                video.src = mp4;
+            });
+            
+            document.body.appendChild(video);
+            return video;
+        }
         
         async function toggleWakeLock() {
             var btn = document.getElementById('btnWake');
             var status = document.getElementById('wakeStatus');
             
             if (!wakeLockEnabled) {
-                try {
-                    // Try native Wake Lock API first
-                    if ('wakeLock' in navigator) {
+                var success = false;
+                
+                // Method 1: Try native Wake Lock API (HTTPS only)
+                if ('wakeLock' in navigator && location.protocol === 'https:') {
+                    try {
                         wakeLock = await navigator.wakeLock.request('screen');
-                        wakeLockEnabled = true;
-                        status.innerText = 'Screen: Stay Awake';
-                        btn.innerText = 'Disable Stay Awake';
-                        btn.style.background = '#060';
-                        
                         wakeLock.addEventListener('release', function() {
-                            wakeLockEnabled = false;
-                            status.innerText = 'Screen: Normal';
-                            btn.innerText = 'Enable Stay Awake';
-                            btn.style.background = '#555';
+                            if (wakeLockEnabled) {
+                                // Try to re-acquire
+                                toggleWakeLock().then(function(){}).catch(function(){});
+                            }
                         });
-                    } else {
-                        // Fallback: use invisible video trick
-                        if (!noSleepVideo) {
-                            noSleepVideo = document.createElement('video');
-                            noSleepVideo.setAttribute('playsinline', '');
-                            noSleepVideo.setAttribute('muted', '');
-                            noSleepVideo.style.position = 'absolute';
-                            noSleepVideo.style.left = '-9999px';
-                            // Minimal base64 video
-                            noSleepVideo.src = 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAAA3RtZGF0AAACrgYF//+q3EXpvebZSLeWLNgg2SPu73gyNjQgLSBjb3JlIDE0MiByMjQ3OSBkZDc5YTYxIC0gSC4yNjQvTVBFRy00IEFWQyBjb2RlYyAtIENvcHlsZWZ0IDIwMDMtMjAxNCAtIGh0dHA6Ly93d3cudmlkZW9sYW4ub3JnL3gyNjQuaHRtbCAtIG9wdGlvbnM6IGNhYmFjPTEgcmVmPTMgZGVibG9jaz0xOjA6MCBhbmFseXNlPTB4MzoweDExMyBtZT1oZXggc3VibWU9NyBwc3k9MSBwc3lfcmQ9MS4wMDowLjAwIG1peGVkX3JlZj0xIG1lX3JhbmdlPTE2IGNocm9tYV9tZT0xIHRyZWxsaXM9MSA4eDhkY3Q9MSBjcW09MCBkZWFkem9uZT0yMSwxMSBmYXN0X3Bza2lwPTEgY2hyb21hX3FwX29mZnNldD0tMiB0aHJlYWRzPTEgbG9va2FoZWFkX3RocmVhZHM9MSBzbGljZWRfdGhyZWFkcz0wIG5yPTAgZGVjaW1hdGU9MSBpbnRlcmxhY2VkPTAgYmx1cmF5X2NvbXBhdD0wIGNvbnN0cmFpbmVkX2ludHJhPTAgYmZyYW1lcz0zIGJfcHlyYW1pZD0yIGJfYWRhcHQ9MSBiX2JpYXM9MCBkaXJlY3Q9MSB3ZWlnaHRiPTEgb3Blbl9nb3A9MCB3ZWlnaHRwPTIga2V5aW50PTI1MCBrZXlpbnRfbWluPTEwIHNjZW5lY3V0PTQwIGludHJhX3JlZnJlc2g9MCByY19sb29rYWhlYWQ9NDAgcmM9Y3JmIG1idHJlZT0xIGNyZj0yMy4wIHFjb21wPTAuNjAgcXBtaW49MCBxcG1heD02OSBxcHN0ZXA9NCBpcF9yYXRpbz0xLjQwIGFxPTE6MS4wMACAAAABPGWIhAAv//72rvzLK0cLlS4dWXuzUfLoSXL9iDB9aAAAAwAAAwAAJuKiZ0WFMeJsgAAALmAIWElDyDzETFWKgSzgBDm/8Ae6e6E9O3l8BZXwrGvPb1gQbHLv0srEEDKhrCdQ3gAPOcfhvusG7+olvMm2E9cFep99ANgTSqmQbOy3gaGXt9CqUb1UiMN3PQ2j5TVPqgxB/lDOTrjIwfXmmNAPRAHgBA4wEBpAB7jyU5rNKF1i/7Pu+P0WT9mjHo6jGdpQcWFaJBNjK8zKe+m6buKtA0IqS7j0cWaH1D48JG5m/PnCKkppfxibexixVLRiNT90n0bnTMtADQAeAAR+FBLuw1GAMgAfgAAAAsAZ4jakf/AAADABbxRs6a44RQ4ysMhAUAAAAJQZoiSahBaJlMCH///qmWAAADAAADABYGHMqvgKAAAZAAACWEZYiEAD///vdonwKbWkN6kfZnxm0HrrPMpWBfpMB0QAAADAAFA2tgFIAAqAAAaYGeLGpH/wAAAwAEBJRT/AA1YXNIW7z7VvuQAAADAAoAmQmXYkQKYEP3AAA1IGsAAAAAAEmQZosb8A/8AAAMANFmAAADALQAACIBni5qR/8AAAMAAg53UpAAAAwAb8AABKwZ4uakf/AAADAAAqAAAAAASZBmixvwD/wAAAwA0WYAAADALAAAASR5Bmiw=';
-                            document.body.appendChild(noSleepVideo);
-                        }
-                        noSleepVideo.loop = true;
-                        noSleepVideo.play();
-                        wakeLockEnabled = true;
-                        status.innerText = 'Screen: Stay Awake (video)';
-                        btn.innerText = 'Disable Stay Awake';
-                        btn.style.background = '#060';
+                        success = true;
+                        status.innerText = 'Stay Awake: ON';
+                        console.log('[WakeLock] Native API active');
+                    } catch(e) {
+                        console.log('[WakeLock] Native API failed:', e.message);
                     }
-                } catch(e) {
-                    status.innerText = 'Wake Lock Error: ' + e.message;
-                    console.error('Wake lock error:', e);
+                }
+                
+                // Method 2: Video trick (works on HTTP)
+                if (!success) {
+                    try {
+                        if (!noSleepVideo) {
+                            noSleepVideo = createNoSleepVideo();
+                        }
+                        
+                        // Play video
+                        var playPromise = noSleepVideo.play();
+                        if (playPromise !== undefined) {
+                            await playPromise;
+                        }
+                        
+                        // Keep playing with interval (some browsers pause hidden videos)
+                        noSleepInterval = setInterval(function() {
+                            if (noSleepVideo && noSleepVideo.paused && wakeLockEnabled) {
+                                noSleepVideo.play().catch(function(){});
+                            }
+                        }, 15000);
+                        
+                        success = true;
+                        status.innerText = 'Stay Awake: ON (video)';
+                        console.log('[WakeLock] Video method active');
+                    } catch(e) {
+                        console.log('[WakeLock] Video method failed:', e.message);
+                        status.innerText = 'Error: ' + e.message;
+                    }
+                }
+                
+                if (success) {
+                    wakeLockEnabled = true;
+                    btn.innerText = 'Disable Stay Awake';
+                    btn.style.background = '#060';
                 }
             } else {
-                // Disable wake lock
+                // Disable
                 wakeLockEnabled = false;
+                
                 if (wakeLock) {
-                    wakeLock.release();
+                    try { wakeLock.release(); } catch(e) {}
                     wakeLock = null;
                 }
+                
+                if (noSleepInterval) {
+                    clearInterval(noSleepInterval);
+                    noSleepInterval = null;
+                }
+                
                 if (noSleepVideo) {
                     noSleepVideo.pause();
                 }
+                
                 status.innerText = 'Screen: Normal';
                 btn.innerText = 'Enable Stay Awake';
                 btn.style.background = '#555';
+                console.log('[WakeLock] Disabled');
             }
         }
         
         // Re-acquire wake lock on visibility change
         document.addEventListener('visibilitychange', async function() {
-            if (wakeLockEnabled && wakeLock === null && document.visibilityState === 'visible') {
-                try {
-                    if ('wakeLock' in navigator) {
+            if (!wakeLockEnabled) return;
+            
+            if (document.visibilityState === 'visible') {
+                // Try to re-acquire native wake lock
+                if ('wakeLock' in navigator && location.protocol === 'https:' && wakeLock === null) {
+                    try {
                         wakeLock = await navigator.wakeLock.request('screen');
-                    }
-                } catch(e) {}
+                        console.log('[WakeLock] Re-acquired on visibility');
+                    } catch(e) {}
+                }
+                
+                // Resume video if paused
+                if (noSleepVideo && noSleepVideo.paused) {
+                    noSleepVideo.play().catch(function(){});
+                }
             }
         });
 
-        // Register Service Worker for PWA
+        // Check if running as installed PWA
+        var isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
+                          window.navigator.standalone === true;
+
+        // PWA Install handling
         var pwaStatusEl = document.getElementById('pwaStatus');
+        var btnInstall = document.getElementById('btnInstall');
+        var deferredPrompt = null;
+
+        // Register Service Worker
         if ('serviceWorker' in navigator) {
-            // PWA requires HTTPS or localhost
             var isSecure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
             if (isSecure) {
-                navigator.serviceWorker.register('/sw.js', {scope: '/'}).then(function(reg) {
-                    pwaStatusEl.innerText = 'PWA: Ready';
-                    console.log('SW registered:', reg.scope);
+                navigator.serviceWorker.register('/sw.js').then(function(reg) {
+                    console.log('[PWA] Service Worker registered');
+                    if (isStandalone) {
+                        pwaStatusEl.innerText = 'App Mode ✓';
+                        pwaStatusEl.style.color = '#4CAF50';
+                    } else {
+                        pwaStatusEl.innerText = 'PWA Ready';
+                    }
                 }).catch(function(err) {
-                    pwaStatusEl.innerText = 'SW Error: ' + err.message.substring(0, 40);
-                    console.error('SW error:', err);
+                    console.error('[PWA] SW Error:', err);
+                    pwaStatusEl.innerText = 'SW Error';
                 });
             } else {
-                pwaStatusEl.innerText = 'PWA: Requires HTTPS (use port 8081)';
+                pwaStatusEl.innerText = 'Use HTTPS (8081)';
+                pwaStatusEl.style.color = '#FFA500';
             }
         } else {
-            pwaStatusEl.innerText = 'PWA: Not supported';
+            pwaStatusEl.innerText = 'Not supported';
         }
 
-        var deferredPrompt;
+        // Capture install prompt
         window.addEventListener('beforeinstallprompt', function(e) {
+            console.log('[PWA] beforeinstallprompt fired!');
             e.preventDefault();
             deferredPrompt = e;
-            document.getElementById('btnInstall').style.display = 'block';
+            btnInstall.style.display = 'block';
+            pwaStatusEl.innerText = 'Tap Install!';
+            pwaStatusEl.style.color = '#4CAF50';
+        });
+
+        // Detect when app is installed
+        window.addEventListener('appinstalled', function(e) {
+            console.log('[PWA] App installed!');
+            pwaStatusEl.innerText = 'Installed ✓';
+            pwaStatusEl.style.color = '#4CAF50';
+            btnInstall.style.display = 'none';
+            deferredPrompt = null;
         });
 
         function installPWA() {
             if (deferredPrompt) {
                 deferredPrompt.prompt();
                 deferredPrompt.userChoice.then(function(result) {
-                    if (result.outcome === 'accepted') {
-                        document.getElementById('pwaStatus').innerText = 'PWA: Installed!';
-                    }
+                    console.log('[PWA] Choice:', result.outcome);
                     deferredPrompt = null;
+                    btnInstall.style.display = 'none';
                 });
+            } else if (isStandalone) {
+                alert('Already installed!');
+            } else {
+                // Manual instruction
+                var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+                if (isIOS) {
+                    alert('iOS: Tap Share → Add to Home Screen');
+                } else {
+                    alert('Tap browser menu (⋮) → Install app');
+                }
             }
         }
 
@@ -1252,46 +1440,29 @@ namespace Win7App
 
         private void ServeManifest(StreamWriter writer)
         {
+            // Simplified manifest - Chrome Android requires clean JSON
             string manifest = @"{
-    ""id"": ""win7-virtual-monitor"",
     ""name"": ""Win7 Virtual Monitor"",
     ""short_name"": ""Win7VM"",
-    ""description"": ""Stream Windows 7 display to Android"",
+    ""description"": ""Stream Windows display to your device"",
     ""start_url"": ""/"",
     ""scope"": ""/"",
     ""display"": ""standalone"",
     ""orientation"": ""any"",
     ""background_color"": ""#000000"",
     ""theme_color"": ""#1a1a2e"",
-    ""categories"": [""utilities""],
     ""icons"": [
         {
             ""src"": ""/icon-192.png"",
             ""sizes"": ""192x192"",
-            ""type"": ""image/png"",
-            ""purpose"": ""any""
+            ""type"": ""image/png""
         },
         {
             ""src"": ""/icon-512.png"",
             ""sizes"": ""512x512"",
-            ""type"": ""image/png"",
-            ""purpose"": ""any""
-        },
-        {
-            ""src"": ""/icon-192-maskable.png"",
-            ""sizes"": ""192x192"",
-            ""type"": ""image/png"",
-            ""purpose"": ""maskable""
-        },
-        {
-            ""src"": ""/icon-512-maskable.png"",
-            ""sizes"": ""512x512"",
-            ""type"": ""image/png"",
-            ""purpose"": ""maskable""
+            ""type"": ""image/png""
         }
-    ],
-    ""screenshots"": [],
-    ""prefer_related_applications"": false
+    ]
 }";
             byte[] manifestBytes = Encoding.UTF8.GetBytes(manifest);
             writer.WriteLine("HTTP/1.1 200 OK");
@@ -1307,17 +1478,26 @@ namespace Win7App
 
         private void ServeIcon(string url, Stream stream, StreamWriter writer)
         {
-            // Generate PNG icon dynamically
-            int size = 192;
+            // Generate PNG icon dynamically - support all sizes
+            int size = 192; // default
             bool maskable = url.Contains("maskable");
             
-            if (url.Contains("512"))
-                size = 512;
+            // Parse size from URL (e.g., /icon-48.png, /icon-512-maskable.png)
+            if (url.Contains("512")) size = 512;
+            else if (url.Contains("384")) size = 384;
+            else if (url.Contains("192")) size = 192;
+            else if (url.Contains("144")) size = 144;
+            else if (url.Contains("128")) size = 128;
+            else if (url.Contains("96")) size = 96;
+            else if (url.Contains("72")) size = 72;
+            else if (url.Contains("48")) size = 48;
             
             using (Bitmap bmp = new Bitmap(size, size))
             using (Graphics g = Graphics.FromImage(bmp))
             {
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
                 
                 if (maskable)
                 {
@@ -1340,7 +1520,8 @@ namespace Win7App
                         // Screen (inner)
                         using (Brush black = new SolidBrush(Color.FromArgb(40, 40, 60)))
                         {
-                            g.FillRectangle(black, monX + 4, monY + 4, monW - 8, monH - 12);
+                            int border = Math.Max(2, size / 48);
+                            g.FillRectangle(black, monX + border, monY + border, monW - border * 2, monH - border * 3);
                         }
                         
                         // Stand
@@ -1350,12 +1531,13 @@ namespace Win7App
                         
                         // Base
                         int baseW = monW / 2;
-                        int baseH = 4;
+                        int baseH = Math.Max(2, size / 64);
                         g.FillRectangle(brush, monX + (monW - baseW) / 2, monY + monH + standH, baseW, baseH);
                     }
                     
                     // Draw "7" text
-                    using (Font font = new Font("Arial", size / 6, FontStyle.Bold))
+                    float fontSize = Math.Max(8, size / 6f);
+                    using (Font font = new Font("Arial", fontSize, FontStyle.Bold))
                     using (Brush white = new SolidBrush(Color.White))
                     {
                         StringFormat sf = new StringFormat();
@@ -1370,7 +1552,7 @@ namespace Win7App
                     g.Clear(Color.Transparent);
                     
                     // Draw rounded rect background
-                    int radius = size / 8;
+                    int radius = Math.Max(4, size / 8);
                     using (Brush bgBrush = new SolidBrush(Color.FromArgb(26, 26, 46)))
                     {
                         FillRoundedRect(g, bgBrush, 0, 0, size, size, radius);
@@ -1391,7 +1573,8 @@ namespace Win7App
                         
                         using (Brush black = new SolidBrush(Color.FromArgb(40, 40, 60)))
                         {
-                            g.FillRectangle(black, monX + 3, monY + 3, monW - 6, monH - 10);
+                            int border = Math.Max(2, size / 64);
+                            g.FillRectangle(black, monX + border, monY + border, monW - border * 2, monH - border * 3);
                         }
                         
                         int standW = monW / 4;
@@ -1399,11 +1582,13 @@ namespace Win7App
                         g.FillRectangle(brush, monX + (monW - standW) / 2, monY + monH, standW, standH);
                         
                         int baseW = monW / 2;
-                        g.FillRectangle(brush, monX + (monW - baseW) / 2, monY + monH + standH, baseW, 3);
+                        int baseH = Math.Max(2, size / 64);
+                        g.FillRectangle(brush, monX + (monW - baseW) / 2, monY + monH + standH, baseW, baseH);
                     }
                     
-                    // "7" text
-                    using (Font font = new Font("Arial", size / 5, FontStyle.Bold))
+                    // "7" text - scale font size appropriately
+                    float fontSize = Math.Max(8, size / 5f);
+                    using (Font font = new Font("Arial", fontSize, FontStyle.Bold))
                     using (Brush white = new SolidBrush(Color.White))
                     {
                         StringFormat sf = new StringFormat();
@@ -1421,7 +1606,7 @@ namespace Win7App
                     writer.WriteLine("HTTP/1.1 200 OK");
                     writer.WriteLine("Content-Type: image/png");
                     writer.WriteLine(String.Format("Content-Length: {0}", pngData.Length));
-                    writer.WriteLine("Cache-Control: public, max-age=86400");
+                    writer.WriteLine("Cache-Control: public, max-age=604800"); // 1 week for icons
                     writer.WriteLine("Access-Control-Allow-Origin: *");
                     writer.WriteLine();
                     writer.Flush();
@@ -1444,95 +1629,136 @@ namespace Win7App
             }
         }
 
+        private void ServeOfflinePage(StreamWriter writer)
+        {
+            string offlineHtml = @"<!DOCTYPE html>
+<html lang='en'>
+<head>
+    <meta charset='UTF-8'>
+    <title>Win7VM - Offline</title>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <meta name='theme-color' content='#1a1a2e'>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            min-height: 100vh; 
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            display: flex; 
+            flex-direction: column;
+            justify-content: center; 
+            align-items: center; 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        .icon { font-size: 64px; margin-bottom: 20px; opacity: 0.8; }
+        h1 { font-size: 24px; margin-bottom: 10px; color: #0096ff; }
+        p { color: #888; margin-bottom: 20px; max-width: 300px; line-height: 1.5; }
+        .btn {
+            background: #0096ff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn:hover { background: #0077cc; }
+        .status { margin-top: 20px; font-size: 12px; color: #666; }
+    </style>
+</head>
+<body>
+    <div class='icon'>📡</div>
+    <h1>You're Offline</h1>
+    <p>Unable to connect to Win7 Virtual Monitor server. Please check your network connection and try again.</p>
+    <button class='btn' onclick='location.reload()'>Retry Connection</button>
+    <div class='status' id='status'>Checking connection...</div>
+    <script>
+        // Auto-retry when back online
+        window.addEventListener('online', function() {
+            document.getElementById('status').innerText = 'Connection restored! Reloading...';
+            setTimeout(function() { location.reload(); }, 1000);
+        });
+        
+        // Update status
+        if (navigator.onLine) {
+            document.getElementById('status').innerText = 'Network available - Server may be unreachable';
+        } else {
+            document.getElementById('status').innerText = 'No network connection';
+        }
+        
+        // Periodic check
+        setInterval(function() {
+            fetch('/?ping=' + Date.now(), { method: 'HEAD', cache: 'no-store' })
+                .then(function() { location.reload(); })
+                .catch(function() {});
+        }, 5000);
+    </script>
+</body>
+</html>";
+            byte[] htmlBytes = Encoding.UTF8.GetBytes(offlineHtml);
+            writer.WriteLine("HTTP/1.1 200 OK");
+            writer.WriteLine("Content-Type: text/html; charset=utf-8");
+            writer.WriteLine(String.Format("Content-Length: {0}", htmlBytes.Length));
+            writer.WriteLine("Cache-Control: public, max-age=86400");
+            writer.WriteLine();
+            writer.Flush();
+            writer.BaseStream.Write(htmlBytes, 0, htmlBytes.Length);
+            writer.BaseStream.Flush();
+        }
+
         private void ServeServiceWorker(StreamWriter writer)
         {
-            string sw = @"const CACHE_NAME = 'win7vm-v4';
-const STATIC_ASSETS = [
-    '/icon-192.png',
-    '/icon-512.png',
-    '/icon-192-maskable.png',
-    '/icon-512-maskable.png',
-    '/manifest.json'
-];
+            // Simplified service worker for PWA install compatibility
+            string sw = @"const CACHE_NAME = 'win7vm-v6';
 
-// Install - cache static assets
+// Install event
 self.addEventListener('install', (event) => {
-    event.waitUntil(
-        caches.open(CACHE_NAME)
-            .then((cache) => cache.addAll(STATIC_ASSETS))
-            .then(() => self.skipWaiting())
-            .catch((err) => {
-                console.log('Cache addAll failed:', err);
-                return self.skipWaiting();
-            })
-    );
+    console.log('[SW] Installing...');
+    self.skipWaiting();
 });
 
-// Activate - cleanup old caches
+// Activate event
 self.addEventListener('activate', (event) => {
-    event.waitUntil(
-        caches.keys()
-            .then((keys) => Promise.all(
-                keys.filter((key) => key !== CACHE_NAME)
-                    .map((key) => caches.delete(key))
-            ))
-            .then(() => self.clients.claim())
-    );
+    console.log('[SW] Activating...');
+    event.waitUntil(self.clients.claim());
 });
 
-// Fetch - network first for dynamic, cache first for static
+// Fetch event - REQUIRED for PWA install prompt
 self.addEventListener('fetch', (event) => {
-    const url = event.request.url;
-    
-    // Skip non-GET requests
+    // Only handle GET requests
     if (event.request.method !== 'GET') return;
     
     // Skip streaming endpoints
-    if (url.includes('/stream') || 
-        url.includes('/audio') || 
-        url.includes('/touch') ||
-        url.includes('auth=')) {
+    const url = new URL(event.request.url);
+    if (url.pathname === '/stream' || 
+        url.pathname === '/audio' ||
+        url.pathname === '/touch') {
         return;
     }
     
-    // Static assets - cache first
-    if (url.includes('/icon-') || url.includes('/manifest.json')) {
-        event.respondWith(
-            caches.match(event.request)
-                .then((cached) => cached || fetch(event.request)
-                    .then((response) => {
-                        if (response.ok) {
-                            const clone = response.clone();
-                            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-                        }
-                        return response;
-                    })
-                )
-        );
-        return;
-    }
-    
-    // Main page - network first, fallback to cache
-    if (url.endsWith('/') || url.includes('/?')) {
-        event.respondWith(
-            fetch(event.request)
-                .then((response) => {
-                    if (response.ok) {
-                        const clone = response.clone();
-                        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-                    }
-                    return response;
-                })
-                .catch(() => caches.match(event.request))
-        );
-        return;
-    }
+    // Network first strategy
+    event.respondWith(
+        fetch(event.request)
+            .then((response) => {
+                return response;
+            })
+            .catch(() => {
+                // Return offline page for navigation requests
+                if (event.request.mode === 'navigate') {
+                    return caches.match('/offline');
+                }
+                return new Response('Offline', { status: 503 });
+            })
+    );
 });";
             byte[] swBytes = Encoding.UTF8.GetBytes(sw);
             writer.WriteLine("HTTP/1.1 200 OK");
             writer.WriteLine("Content-Type: application/javascript; charset=utf-8");
             writer.WriteLine(String.Format("Content-Length: {0}", swBytes.Length));
-            writer.WriteLine("Cache-Control: no-cache");
+            writer.WriteLine("Cache-Control: no-cache, no-store, must-revalidate");
             writer.WriteLine("Service-Worker-Allowed: /");
             writer.WriteLine("Access-Control-Allow-Origin: *");
             writer.WriteLine();

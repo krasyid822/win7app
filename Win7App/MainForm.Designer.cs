@@ -22,6 +22,7 @@ namespace Win7App
         private System.Windows.Forms.Button buttonUacToggle;
         private System.Windows.Forms.GroupBox groupUac;
         private System.Windows.Forms.Button buttonExportCert;
+        private System.Windows.Forms.Button buttonExportLog;
 
         protected override void Dispose(bool disposing)
         {
@@ -50,6 +51,7 @@ namespace Win7App
             this.buttonUacToggle = new System.Windows.Forms.Button();
             this.groupUac = new System.Windows.Forms.GroupBox();
             this.buttonExportCert = new System.Windows.Forms.Button();
+            this.buttonExportLog = new System.Windows.Forms.Button();
             this.groupUac.SuspendLayout();
             this.SuspendLayout();
             // 
@@ -110,7 +112,7 @@ namespace Win7App
             this.label1.Name = "label1";
             this.label1.Size = new System.Drawing.Size(80, 13);
             this.label1.TabIndex = 5;
-            this.label1.Text = "HTTP:8080 HTTPS:8081";
+            this.label1.Text = "Port:8080/8081";
             // 
             // labelPassword
             // 
@@ -179,9 +181,20 @@ namespace Win7App
             this.buttonExportCert.Name = "buttonExportCert";
             this.buttonExportCert.Size = new System.Drawing.Size(42, 23);
             this.buttonExportCert.TabIndex = 16;
-            this.buttonExportCert.Text = "Cert";
+            this.buttonExportCert.Text = "SSL";
             this.buttonExportCert.UseVisualStyleBackColor = true;
             this.buttonExportCert.Click += new System.EventHandler(this.buttonExportCert_Click);
+            // 
+            // buttonExportLog
+            // 
+            this.buttonExportLog.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
+            this.buttonExportLog.Location = new System.Drawing.Point(290, 262);
+            this.buttonExportLog.Name = "buttonExportLog";
+            this.buttonExportLog.Size = new System.Drawing.Size(82, 23);
+            this.buttonExportLog.TabIndex = 17;
+            this.buttonExportLog.Text = "Export Log";
+            this.buttonExportLog.UseVisualStyleBackColor = true;
+            this.buttonExportLog.Click += new System.EventHandler(this.buttonExportLog_Click);
             // 
             // labelIPs
             // 
@@ -217,7 +230,7 @@ namespace Win7App
             this.groupUac.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left) | System.Windows.Forms.AnchorStyles.Right)));
             this.groupUac.Controls.Add(this.labelUacStatus);
             this.groupUac.Controls.Add(this.buttonUacToggle);
-            this.groupUac.Location = new System.Drawing.Point(12, 268);
+            this.groupUac.Location = new System.Drawing.Point(12, 294);
             this.groupUac.Name = "groupUac";
             this.groupUac.Size = new System.Drawing.Size(360, 55);
             this.groupUac.TabIndex = 15;
@@ -247,7 +260,8 @@ namespace Win7App
             //  
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(384, 335);
+            this.ClientSize = new System.Drawing.Size(384, 361);
+            this.Controls.Add(this.buttonExportLog);
             this.Controls.Add(this.groupUac);
             this.Controls.Add(this.buttonExportCert);
             this.Controls.Add(this.chkEnableHttps);

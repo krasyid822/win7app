@@ -31,6 +31,9 @@ namespace Win7App
 
         private void MainForm_Load(object sender, EventArgs e)
         {
+            // Enable TLS 1.2 for Windows 7 compatibility
+            SslCertificateHelper.EnableTls12(Log);
+            
             RefreshScreens();
             LoadSettings();
             UpdateIPList();
@@ -342,10 +345,19 @@ namespace Win7App
 
             if (!isAdmin)
             {
-                labelUacStatus.Text = "Tidak berjalan sebagai Admin.\nUAC screen tidak bisa di-capture.";
+                // Check if running from auto-startup
+                bool isAutoStartup = chkStartWithWindows.Checked;
+                if (isAutoStartup)
+                {
+                    labelUacStatus.Text = "Auto-start tanpa Admin.\nKlik untuk restart sebagai Admin.";
+                }
+                else
+                {
+                    labelUacStatus.Text = "Tidak sebagai Admin.\nKlik untuk restart sebagai Admin.";
+                }
                 labelUacStatus.ForeColor = System.Drawing.Color.Red;
-                buttonUacToggle.Enabled = false;
-                buttonUacToggle.Text = "Need Admin";
+                buttonUacToggle.Enabled = true;  // Enable button to allow restart as admin
+                buttonUacToggle.Text = "Run Admin";
             }
             else if (secureDesktop)
             {
@@ -368,6 +380,72 @@ namespace Win7App
 
         private void buttonUacToggle_Click(object sender, EventArgs e)
         {
+            bool isAdmin = UacHelper.IsRunningAsAdmin();
+            
+            // If not admin, restart app as admin
+            if (!isAdmin)
+            {
+                var result = MessageBox.Show(
+                    "Aplikasi akan di-restart dengan hak Administrator.\n\n" +
+                    "Ini diperlukan untuk:\n" +
+                    "• Capture layar UAC\n" +
+                    "• Mengubah pengaturan Secure Desktop\n\n" +
+                    "Lanjutkan?",
+                    "Restart sebagai Administrator",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question);
+
+                if (result == DialogResult.Yes)
+                {
+                    try
+                    {
+                        // Stop server if running
+                        if (_server != null)
+                        {
+                            _server.Stop();
+                        }
+                        
+                        // Save settings before restart
+                        SaveSettings();
+                        
+                        // Restart as admin
+                        System.Diagnostics.ProcessStartInfo startInfo = new System.Diagnostics.ProcessStartInfo();
+                        startInfo.FileName = Application.ExecutablePath;
+                        startInfo.UseShellExecute = true;
+                        startInfo.Verb = "runas";  // Request admin privileges
+                        
+                        System.Diagnostics.Process.Start(startInfo);
+                        
+                        // Close current instance
+                        Application.Exit();
+                    }
+                    catch (System.ComponentModel.Win32Exception ex)
+                    {
+                        if (ex.NativeErrorCode == 1223) // ERROR_CANCELLED - user declined UAC
+                        {
+                            Log("User membatalkan permintaan Administrator.");
+                            MessageBox.Show(
+                                "Permintaan Administrator dibatalkan.\n\n" +
+                                "Fitur capture layar UAC tidak akan berfungsi.",
+                                "Dibatalkan",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Information);
+                        }
+                        else
+                        {
+                            Log(String.Format("Error restart as admin: {0}", ex.Message));
+                            MessageBox.Show(
+                                "Gagal restart sebagai Administrator:\n" + ex.Message,
+                                "Error",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Error);
+                        }
+                    }
+                }
+                return;
+            }
+            
+            // Already admin - toggle secure desktop
             bool secureDesktop = UacHelper.IsSecureDesktopEnabled();
 
             if (secureDesktop)
@@ -432,54 +510,137 @@ namespace Win7App
         private void buttonExportCert_Click(object sender, EventArgs e)
         {
             string certPath = SslCertificateHelper.GetPublicCertificatePath();
+            bool certInTrustedRoot = SslCertificateHelper.IsCertificateInTrustedRoot();
             
-            if (!System.IO.File.Exists(certPath))
-            {
-                // Coba generate certificate dulu
-                Log("Generating SSL certificate...");
-                X509Certificate2 cert = SslCertificateHelper.GetOrCreateCertificate(Log);
-                if (cert == null)
-                {
-                    MessageBox.Show(
-                        "Gagal membuat SSL certificate.\n\n" +
-                        "Kemungkinan penyebab:\n" +
-                        "- Windows 7 memerlukan KB2999226 (Windows Update)\n" +
-                        "- Jalankan sebagai Administrator\n\n" +
-                        "HTTPS tidak akan tersedia, gunakan HTTP saja.",
-                        "Certificate Error",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Warning);
-                    return;
-                }
-            }
+            string status = certInTrustedRoot ? "✓ Terinstall" : "⚠ Belum terinstall";
+            string message = String.Format(
+                "SSL Certificate: {0}\n\n" +
+                "Pilih aksi:\n" +
+                "• YES = Install certificate ke Windows\n" +
+                "• NO = Regenerate certificate (fix SSL error)\n" +
+                "• Cancel = Export untuk Android",
+                status);
 
-            if (System.IO.File.Exists(certPath))
+            DialogResult result = MessageBox.Show(
+                message,
+                "SSL Certificate",
+                MessageBoxButtons.YesNoCancel,
+                MessageBoxIcon.Information);
+
+            if (result == DialogResult.Yes)
             {
-                // Buka folder lokasi certificate
-                System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + certPath + "\"");
+                // Install certificate
+                Log("Installing SSL certificate...");
+                bool success = SslCertificateHelper.ForceReinstallCertificate(Log);
                 
                 MessageBox.Show(
-                    "Certificate file dibuka di Explorer.\n\n" +
-                    "Cara install di Android:\n" +
-                    "1. Copy file .cer ke HP Android\n" +
-                    "2. Buka Settings > Security\n" +
-                    "3. Pilih 'Install from storage' atau 'Install certificate'\n" +
-                    "4. Pilih file Win7App_cert.cer\n" +
-                    "5. Beri nama 'Win7VirtualMonitor'\n" +
-                    "6. Selesai! Browser akan mempercayai HTTPS server ini.\n\n" +
-                    "Lokasi: " + certPath,
-                    "Install Certificate di Android",
+                    success ? "Certificate berhasil diinstall!" : "Gagal install certificate.",
+                    success ? "Success" : "Error",
                     MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
+                    success ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
             }
-            else
+            else if (result == DialogResult.No)
+            {
+                // Regenerate
+                if (MessageBox.Show(
+                    "Regenerate certificate?\n\nIni akan membuat certificate baru.",
+                    "Konfirmasi",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning) == DialogResult.Yes)
+                {
+                    Log("Regenerating SSL certificate...");
+                    bool success = SslCertificateHelper.RegenerateCertificate(Log);
+                    
+                    MessageBox.Show(
+                        success ? "Certificate baru dibuat!\nRestart aplikasi." : "Gagal regenerate. Lihat log.",
+                        success ? "Success" : "Error",
+                        MessageBoxButtons.OK,
+                        success ? MessageBoxIcon.Information : MessageBoxIcon.Error);
+                }
+            }
+            else if (result == DialogResult.Cancel)
+            {
+                // Export for Android
+                if (!System.IO.File.Exists(certPath))
+                {
+                    Log("Generating SSL certificate...");
+                    SslCertificateHelper.GetOrCreateCertificate(Log);
+                }
+
+                if (System.IO.File.Exists(certPath))
+                {
+                    System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + certPath + "\"");
+                    
+                    MessageBox.Show(
+                        "Copy file .cer ke Android.\n\n" +
+                        "Di Android:\n" +
+                        "Settings > Security > Install certificate\n\n" +
+                        "File: " + certPath,
+                        "Export untuk Android",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
+            }
+        }
+
+        private void buttonExportLog_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                // Create log content with timestamp
+                string logContent = String.Format(
+                    "=== Win7App Log Export ===\r\n" +
+                    "Date: {0}\r\n" +
+                    "Computer: {1}\r\n" +
+                    "OS: {2}\r\n" +
+                    ".NET: {3}\r\n" +
+                    "========================\r\n\r\n{4}",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                    Environment.MachineName,
+                    Environment.OSVersion.ToString(),
+                    Environment.Version.ToString(),
+                    textLog.Text);
+
+                // Show save dialog
+                SaveFileDialog saveDialog = new SaveFileDialog();
+                saveDialog.Filter = "Text files (*.txt)|*.txt|Log files (*.log)|*.log|All files (*.*)|*.*";
+                saveDialog.DefaultExt = "txt";
+                saveDialog.FileName = String.Format("Win7App_log_{0}.txt", DateTime.Now.ToString("yyyyMMdd_HHmmss"));
+                
+                // Try to default to Desktop or Documents
+                try
+                {
+                    saveDialog.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+                }
+                catch
+                {
+                    saveDialog.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                }
+
+                if (saveDialog.ShowDialog() == DialogResult.OK)
+                {
+                    System.IO.File.WriteAllText(saveDialog.FileName, logContent, Encoding.UTF8);
+                    
+                    Log(String.Format("Log exported to: {0}", saveDialog.FileName));
+                    
+                    // Ask to open folder
+                    if (MessageBox.Show(
+                        "Log berhasil disimpan!\n\n" + saveDialog.FileName + "\n\nBuka folder?",
+                        "Export Log",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Information) == DialogResult.Yes)
+                    {
+                        System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + saveDialog.FileName + "\"");
+                    }
+                }
+            }
+            catch (Exception ex)
             {
                 MessageBox.Show(
-                    "Certificate belum dibuat.\n" +
-                    "Aktifkan HTTPS dan start server terlebih dahulu.",
-                    "Certificate Not Found",
+                    "Gagal export log:\n" + ex.Message,
+                    "Error",
                     MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
+                    MessageBoxIcon.Error);
             }
         }
     }

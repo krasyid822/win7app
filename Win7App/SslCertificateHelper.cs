@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
 
 namespace Win7App
 {
@@ -14,6 +15,11 @@ namespace Win7App
         private static readonly string CERT_FILE_PATH = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Win7App_cert.pfx");
+        
+        // Path untuk export certificate agar bisa diimpor di Android
+        public static readonly string CERT_CER_PATH = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Win7App_cert.cer");
 
         public static X509Certificate2 GetOrCreateCertificate(Action<string> log)
         {
@@ -29,6 +35,8 @@ namespace Win7App
                         if (cert.NotAfter > DateTime.Now && cert.HasPrivateKey)
                         {
                             log(String.Format("Loaded SSL certificate: HasPrivateKey={0}", cert.HasPrivateKey));
+                            // Pastikan .cer file ada untuk Android
+                            ExportPublicCertificate(cert, log);
                             return cert;
                         }
                         log("Certificate expired or no private key, creating new one...");
@@ -41,20 +49,31 @@ namespace Win7App
                     try { File.Delete(CERT_FILE_PATH); } catch { }
                 }
 
-                // 2. Buat certificate baru via PowerShell
+                // 2. Coba certreq dulu (lebih reliable di Windows 7)
                 log("Creating new self-signed SSL certificate...");
-                X509Certificate2 newCert = CreateCertificateWithPowerShell(log);
-                if (newCert != null && newCert.HasPrivateKey) 
+                X509Certificate2 newCert = CreateCertificateWithCertreq(log);
+                if (newCert != null && newCert.HasPrivateKey)
                 {
-                    log(String.Format("Certificate ready: HasPrivateKey={0}", newCert.HasPrivateKey));
+                    log(String.Format("Certificate from certreq: HasPrivateKey={0}", newCert.HasPrivateKey));
+                    ExportPublicCertificate(newCert, log);
                     return newCert;
                 }
 
-                // 3. Fallback: OpenSSL style via makecert
+                // 3. Coba PowerShell PKI (Windows 8+)
+                newCert = CreateCertificateWithPowerShell(log);
+                if (newCert != null && newCert.HasPrivateKey) 
+                {
+                    log(String.Format("Certificate ready: HasPrivateKey={0}", newCert.HasPrivateKey));
+                    ExportPublicCertificate(newCert, log);
+                    return newCert;
+                }
+
+                // 4. Fallback: makecert
                 newCert = CreateCertificateWithMakeCert(log);
                 if (newCert != null && newCert.HasPrivateKey) 
                 {
                     log(String.Format("Certificate from makecert: HasPrivateKey={0}", newCert.HasPrivateKey));
+                    ExportPublicCertificate(newCert, log);
                     return newCert;
                 }
 
@@ -66,6 +85,31 @@ namespace Win7App
                 log(String.Format("Certificate error: {0}", ex.Message));
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Export public certificate (.cer) untuk diimpor di Android
+        /// </summary>
+        private static void ExportPublicCertificate(X509Certificate2 cert, Action<string> log)
+        {
+            try
+            {
+                byte[] cerData = cert.Export(X509ContentType.Cert);
+                File.WriteAllBytes(CERT_CER_PATH, cerData);
+                log(String.Format("Public certificate exported to: {0}", CERT_CER_PATH));
+            }
+            catch (Exception ex)
+            {
+                log(String.Format("Failed to export public certificate: {0}", ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// Get path to .cer file untuk ditampilkan di UI
+        /// </summary>
+        public static string GetPublicCertificatePath()
+        {
+            return CERT_CER_PATH;
         }
 
         private static X509Certificate2 CreateCertificateWithPowerShell(Action<string> log)
@@ -142,12 +186,13 @@ namespace Win7App
                 try { File.Delete(cerPath); } catch { }
                 try { File.Delete(pfxPath); } catch { }
 
-                // Create INF file for certreq
+                // Create INF file for certreq - improved for Windows 7
+                // Menambahkan SAN (Subject Alternative Name) untuk kompatibilitas browser modern
                 string inf = @"[Version]
 Signature=""$Windows NT$""
 
 [NewRequest]
-Subject = ""CN=Win7VirtualMonitor""
+Subject = ""CN=Win7VirtualMonitor,O=Win7App,L=Local,C=ID""
 KeySpec = 1
 KeyLength = 2048
 Exportable = TRUE
@@ -160,8 +205,22 @@ ProviderName = ""Microsoft RSA SChannel Cryptographic Provider""
 ProviderType = 12
 RequestType = Cert
 KeyUsage = 0xa0
+HashAlgorithm = SHA256
+ValidityPeriod = Years
+ValidityPeriodUnits = 10
+
+[EnhancedKeyUsageExtension]
+OID=1.3.6.1.5.5.7.3.1 ; Server Authentication
+
+[Extensions]
+2.5.29.17 = ""{text}""
+_continue_ = ""dns=localhost&""
+_continue_ = ""dns=Win7VirtualMonitor&""
+_continue_ = ""ip=127.0.0.1&""
+_continue_ = ""ip=192.168.0.0/16&""
+_continue_ = ""ip=10.0.0.0/8&""
 ";
-                File.WriteAllText(infPath, inf);
+                File.WriteAllText(infPath, inf, Encoding.ASCII);
 
                 // Run certreq to create certificate
                 ProcessStartInfo psi = new ProcessStartInfo();
@@ -172,9 +231,14 @@ KeyUsage = 0xa0
                 psi.RedirectStandardError = true;
                 psi.CreateNoWindow = true;
 
-                log("Trying certreq...");
+                log("Trying certreq (Windows 7 compatible)...");
                 Process proc = Process.Start(psi);
+                string output = proc.StandardOutput.ReadToEnd();
+                string error = proc.StandardError.ReadToEnd();
                 proc.WaitForExit(30000);
+                
+                if (!string.IsNullOrEmpty(error))
+                    log(String.Format("certreq stderr: {0}", error.Length > 100 ? error.Substring(0, 100) : error));
 
                 if (File.Exists(cerPath))
                 {
@@ -182,6 +246,7 @@ KeyUsage = 0xa0
                     // First find the cert thumbprint
                     X509Certificate2 tempCert = new X509Certificate2(cerPath);
                     string thumbprint = tempCert.Thumbprint;
+                    log(String.Format("Certificate created, thumbprint: {0}", thumbprint));
 
                     // Export using certutil
                     psi = new ProcessStartInfo();
@@ -214,6 +279,14 @@ KeyUsage = 0xa0
                             return cert;
                         }
                     }
+                    else
+                    {
+                        log("certutil export failed - PFX not created");
+                    }
+                }
+                else
+                {
+                    log("certreq failed - CER not created");
                 }
                 
                 // Cleanup

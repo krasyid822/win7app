@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -426,6 +427,60 @@ namespace Win7App
             }
 
             UpdateUacStatus();
+        }
+
+        private void buttonExportCert_Click(object sender, EventArgs e)
+        {
+            string certPath = SslCertificateHelper.GetPublicCertificatePath();
+            
+            if (!System.IO.File.Exists(certPath))
+            {
+                // Coba generate certificate dulu
+                Log("Generating SSL certificate...");
+                X509Certificate2 cert = SslCertificateHelper.GetOrCreateCertificate(Log);
+                if (cert == null)
+                {
+                    MessageBox.Show(
+                        "Gagal membuat SSL certificate.\n\n" +
+                        "Kemungkinan penyebab:\n" +
+                        "- Windows 7 memerlukan KB2999226 (Windows Update)\n" +
+                        "- Jalankan sebagai Administrator\n\n" +
+                        "HTTPS tidak akan tersedia, gunakan HTTP saja.",
+                        "Certificate Error",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                    return;
+                }
+            }
+
+            if (System.IO.File.Exists(certPath))
+            {
+                // Buka folder lokasi certificate
+                System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + certPath + "\"");
+                
+                MessageBox.Show(
+                    "Certificate file dibuka di Explorer.\n\n" +
+                    "Cara install di Android:\n" +
+                    "1. Copy file .cer ke HP Android\n" +
+                    "2. Buka Settings > Security\n" +
+                    "3. Pilih 'Install from storage' atau 'Install certificate'\n" +
+                    "4. Pilih file Win7App_cert.cer\n" +
+                    "5. Beri nama 'Win7VirtualMonitor'\n" +
+                    "6. Selesai! Browser akan mempercayai HTTPS server ini.\n\n" +
+                    "Lokasi: " + certPath,
+                    "Install Certificate di Android",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+            else
+            {
+                MessageBox.Show(
+                    "Certificate belum dibuat.\n" +
+                    "Aktifkan HTTPS dan start server terlebih dahulu.",
+                    "Certificate Not Found",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
         }
     }
 }

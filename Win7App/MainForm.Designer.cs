@@ -21,6 +21,7 @@ namespace Win7App
         private System.Windows.Forms.Label labelUacStatus;
         private System.Windows.Forms.Button buttonUacToggle;
         private System.Windows.Forms.GroupBox groupUac;
+        private System.Windows.Forms.Button buttonExportCert;
 
         protected override void Dispose(bool disposing)
         {
@@ -48,6 +49,7 @@ namespace Win7App
             this.labelUacStatus = new System.Windows.Forms.Label();
             this.buttonUacToggle = new System.Windows.Forms.Button();
             this.groupUac = new System.Windows.Forms.GroupBox();
+            this.buttonExportCert = new System.Windows.Forms.Button();
             this.groupUac.SuspendLayout();
             this.SuspendLayout();
             // 
@@ -171,6 +173,16 @@ namespace Win7App
             this.chkEnableHttps.Text = "HTTPS";
             this.chkEnableHttps.UseVisualStyleBackColor = true;
             // 
+            // buttonExportCert
+            // 
+            this.buttonExportCert.Location = new System.Drawing.Point(330, 90);
+            this.buttonExportCert.Name = "buttonExportCert";
+            this.buttonExportCert.Size = new System.Drawing.Size(42, 23);
+            this.buttonExportCert.TabIndex = 16;
+            this.buttonExportCert.Text = "Cert";
+            this.buttonExportCert.UseVisualStyleBackColor = true;
+            this.buttonExportCert.Click += new System.EventHandler(this.buttonExportCert_Click);
+            // 
             // labelIPs
             // 
             this.labelIPs.Location = new System.Drawing.Point(12, 118);
@@ -237,6 +249,7 @@ namespace Win7App
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.ClientSize = new System.Drawing.Size(384, 335);
             this.Controls.Add(this.groupUac);
+            this.Controls.Add(this.buttonExportCert);
             this.Controls.Add(this.chkEnableHttps);
             this.Controls.Add(this.panelQR);
             this.Controls.Add(this.buttonQR);

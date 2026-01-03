@@ -588,7 +588,7 @@ namespace Win7App
                     
                     string certCrtPath = System.IO.Path.ChangeExtension(certPath, ".crt");
                     MessageBox.Show(
-                        "Copy file .crt ke Android. Perbarui jika ip server berubah.\n\n" +
+                        "Copy file .crt ke Android. Perbarui jika ip server berubah. Untuk itu disarankan gunakan ip statis.\n\n" +
                         "Di Android:\n" +
                         "Settings > Security > Install CA certificate\n\n" +
                         "File: " + certCrtPath,

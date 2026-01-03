@@ -146,17 +146,31 @@ namespace Win7App
         [DllImport("gdi32.dll")]
         private static extern bool DeleteObject(IntPtr hObject);
 
+        // Cache JPEG encoder for performance
+        private static ImageCodecInfo _jpgEncoder = null;
+        private static EncoderParameters _encoderParams = null;
+        private static long _lastQuality = -1;
+        
         private static byte[] EncodeToJpeg(Bitmap bmp, long quality)
         {
-            using (MemoryStream ms = new MemoryStream())
+            using (MemoryStream ms = new MemoryStream(bmp.Width * bmp.Height / 4)) // Pre-allocate estimated size
             {
-                ImageCodecInfo jpgEncoder = GetEncoder(ImageFormat.Jpeg);
-                System.Drawing.Imaging.Encoder myEncoder = System.Drawing.Imaging.Encoder.Quality;
-                EncoderParameters myEncoderParameters = new EncoderParameters(1);
-                EncoderParameter myEncoderParameter = new EncoderParameter(myEncoder, quality);
-                myEncoderParameters.Param[0] = myEncoderParameter;
+                // Cache encoder for better performance
+                if (_jpgEncoder == null)
+                {
+                    _jpgEncoder = GetEncoder(ImageFormat.Jpeg);
+                }
+                
+                // Only recreate encoder params if quality changed
+                if (_encoderParams == null || _lastQuality != quality)
+                {
+                    _encoderParams = new EncoderParameters(1);
+                    _encoderParams.Param[0] = new EncoderParameter(
+                        System.Drawing.Imaging.Encoder.Quality, quality);
+                    _lastQuality = quality;
+                }
 
-                bmp.Save(ms, jpgEncoder, myEncoderParameters);
+                bmp.Save(ms, _jpgEncoder, _encoderParams);
                 return ms.ToArray();
             }
         }

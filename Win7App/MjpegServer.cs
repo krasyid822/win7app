@@ -601,7 +601,7 @@ namespace Win7App
         .btn:active { background: #777; }
         input { padding: 8px; font-size: 16px; margin: 5px; }
         #floatBtn {
-            position: fixed;
+            position: fixed !important;
             width: 40px; height: 40px;
             border-radius: 50%;
             background: rgba(80, 80, 80, 0.4);
@@ -611,11 +611,15 @@ namespace Win7App
             display: none;
             justify-content: center;
             align-items: center;
-            z-index: 999;
+            z-index: 9999 !important;
             cursor: pointer;
             touch-action: none;
             user-select: none;
             transition: background 0.2s, color 0.2s;
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
         }
         #floatBtn:active { background: rgba(100, 100, 100, 0.7); color: white; }
     </style>
@@ -1250,6 +1254,54 @@ namespace Win7App
         floatBtn.addEventListener('click', function(e) {
             if (!hasMoved) toggleControls();
         });
+        
+        // Keep floating button in viewport on resize/rotation
+        function keepButtonInViewport() {
+            var rect = floatBtn.getBoundingClientRect();
+            var maxX = window.innerWidth - 50;
+            var maxY = window.innerHeight - 50;
+            var newX = rect.left;
+            var newY = rect.top;
+            var changed = false;
+            
+            // Clamp X position
+            if (newX < 0) { newX = 10; changed = true; }
+            if (newX > maxX) { newX = maxX - 10; changed = true; }
+            
+            // Clamp Y position
+            if (newY < 0) { newY = 10; changed = true; }
+            if (newY > maxY) { newY = maxY - 10; changed = true; }
+            
+            if (changed || rect.left < 0 || rect.top < 0 || rect.left > maxX || rect.top > maxY) {
+                floatBtn.style.right = 'auto';
+                floatBtn.style.bottom = 'auto';
+                floatBtn.style.left = newX + 'px';
+                floatBtn.style.top = newY + 'px';
+                localStorage.setItem('floatBtn_x', newX);
+                localStorage.setItem('floatBtn_y', newY);
+            }
+            
+            // Ensure button is visible
+            floatBtn.style.display = 'flex';
+            floatBtn.style.opacity = '1';
+            floatBtn.style.visibility = 'visible';
+        }
+        
+        // Handle orientation change
+        window.addEventListener('orientationchange', function() {
+            // Delay to allow browser to update dimensions
+            setTimeout(keepButtonInViewport, 100);
+            setTimeout(keepButtonInViewport, 300);
+            setTimeout(keepButtonInViewport, 500);
+        });
+        
+        // Handle resize
+        window.addEventListener('resize', function() {
+            setTimeout(keepButtonInViewport, 50);
+        });
+        
+        // Initial check
+        setTimeout(keepButtonInViewport, 100);
     </script>
 </body>
 </html>";
@@ -1270,32 +1322,58 @@ namespace Win7App
             // Write MJPEG Header
             writer.WriteLine("HTTP/1.1 200 OK");
             writer.WriteLine("Content-Type: multipart/x-mixed-replace; boundary=" + boundary);
+            writer.WriteLine("Cache-Control: no-cache, no-store, must-revalidate");
+            writer.WriteLine("Pragma: no-cache");
+            writer.WriteLine("Expires: 0");
             writer.WriteLine();
             writer.Flush();
 
-            while (_isRunning)
+            // Pre-calculate frame interval for more accurate timing
+            int frameInterval = 1000 / _fps;
+            System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
+            
+            // Use BufferedStream for better network performance
+            using (BufferedStream bufferedStream = new BufferedStream(stream, 65536))
             {
-                byte[] jpegBytes = ScreenCapture.CaptureScreenToJpeg(_screenToCapture, _quality);
-
-                if (jpegBytes != null)
+                byte[] boundaryBytes = Encoding.ASCII.GetBytes("--" + boundary + "\r\n");
+                byte[] contentTypeBytes = Encoding.ASCII.GetBytes("Content-Type: image/jpeg\r\n");
+                byte[] newlineBytes = Encoding.ASCII.GetBytes("\r\n");
+                
+                while (_isRunning)
                 {
-                    // Write Frame Header
-                    writer.WriteLine("--" + boundary);
-                    writer.WriteLine("Content-Type: image/jpeg");
-                    writer.WriteLine("Content-Length: " + jpegBytes.Length);
-                    writer.WriteLine();
-                    writer.Flush();
+                    sw.Restart();
+                    
+                    byte[] jpegBytes = ScreenCapture.CaptureScreenToJpeg(_screenToCapture, _quality);
 
-                    // Write Frame Data
-                    stream.Write(jpegBytes, 0, jpegBytes.Length);
-                    stream.Flush();
+                    if (jpegBytes != null)
+                    {
+                        try
+                        {
+                            // Write all frame data in one batch
+                            byte[] lengthBytes = Encoding.ASCII.GetBytes("Content-Length: " + jpegBytes.Length + "\r\n\r\n");
+                            
+                            bufferedStream.Write(boundaryBytes, 0, boundaryBytes.Length);
+                            bufferedStream.Write(contentTypeBytes, 0, contentTypeBytes.Length);
+                            bufferedStream.Write(lengthBytes, 0, lengthBytes.Length);
+                            bufferedStream.Write(jpegBytes, 0, jpegBytes.Length);
+                            bufferedStream.Write(newlineBytes, 0, newlineBytes.Length);
+                            bufferedStream.Flush();
+                        }
+                        catch (Exception)
+                        {
+                            break; // Client disconnected
+                        }
+                    }
 
-                    // Write NewLine
-                    writer.WriteLine();
-                    writer.Flush();
+                    // More accurate frame timing
+                    sw.Stop();
+                    int elapsed = (int)sw.ElapsedMilliseconds;
+                    int sleepTime = frameInterval - elapsed;
+                    if (sleepTime > 0)
+                    {
+                        Thread.Sleep(sleepTime);
+                    }
                 }
-
-                Thread.Sleep(1000 / _fps);
             }
         }
 

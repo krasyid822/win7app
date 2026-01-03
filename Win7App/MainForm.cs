@@ -18,10 +18,16 @@ namespace Win7App
         private string _settingsPath;
         private List<string> _serverUrls = new List<string>();
         private bool _qrVisible = false;
+        private bool _startMinimized = false;
 
-        public MainForm()
+        public MainForm() : this(false)
+        {
+        }
+
+        public MainForm(bool startMinimized)
         {
             InitializeComponent();
+            _startMinimized = startMinimized;
             _server = new MjpegServer(8080);
             _server.LogMessage += Log;
             _settingsPath = System.IO.Path.Combine(
@@ -38,6 +44,14 @@ namespace Win7App
             LoadSettings();
             UpdateIPList();
             UpdateUacStatus();
+            
+            // Minimize if started from Windows startup
+            if (_startMinimized)
+            {
+                this.WindowState = FormWindowState.Minimized;
+                this.ShowInTaskbar = true; // Keep in taskbar so user can restore
+                Log("Started minimized (Windows Startup).");
+            }
             
             // Auto-start jika setting aktif
             if (chkAutoStart.Checked)
@@ -227,8 +241,9 @@ namespace Win7App
                 if (chkStartWithWindows.Checked)
                 {
                     string exePath = Application.ExecutablePath;
-                    rk.SetValue(APP_NAME, "\"" + exePath + "\"");
-                    Log("Ditambahkan ke Windows Startup.");
+                    // Add --minimized argument so app starts minimized on Windows startup
+                    rk.SetValue(APP_NAME, "\"" + exePath + "\" --minimized");
+                    Log("Ditambahkan ke Windows Startup (akan minimize).");
                 }
                 else
                 {
@@ -569,13 +584,14 @@ namespace Win7App
 
                 if (System.IO.File.Exists(certPath))
                 {
-                    System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + certPath + "\"");
+                    System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + System.IO.Path.ChangeExtension(certPath, ".crt") + "\"");
                     
+                    string certCrtPath = System.IO.Path.ChangeExtension(certPath, ".crt");
                     MessageBox.Show(
-                        "Copy file .cer ke Android.\n\n" +
+                        "Copy file .crt ke Android. Perbarui jika ip server berubah.\n\n" +
                         "Di Android:\n" +
-                        "Settings > Security > Install certificate\n\n" +
-                        "File: " + certPath,
+                        "Settings > Security > Install CA certificate\n\n" +
+                        "File: " + certCrtPath,
                         "Export untuk Android",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Information);

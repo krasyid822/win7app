@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -22,6 +23,68 @@ namespace Win7App
         public static readonly string CERT_CER_PATH = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Win7App_cert.cer");
+
+        /// <summary>
+        /// Get all local IPv4 addresses for SAN certificate
+        /// </summary>
+        private static string GetLocalIPAddressesForSAN()
+        {
+            StringBuilder sb = new StringBuilder();
+            try
+            {
+                string hostName = Dns.GetHostName();
+                IPAddress[] addresses = Dns.GetHostAddresses(hostName);
+                
+                foreach (IPAddress ip in addresses)
+                {
+                    // Only IPv4 addresses
+                    if (ip.AddressFamily == AddressFamily.InterNetwork)
+                    {
+                        sb.AppendFormat("_continue_ = \"\"ipaddress={0}&\"\"\n", ip.ToString());
+                    }
+                }
+                
+                // Always add localhost IP
+                sb.Append("_continue_ = \"\"ipaddress=127.0.0.1\"\"\n");
+            }
+            catch
+            {
+                // Fallback - just localhost
+                sb.Append("_continue_ = \"\"ipaddress=127.0.0.1\"\"\n");
+            }
+            return sb.ToString();
+        }
+        
+        /// <summary>
+        /// Get all local IPv4 addresses for SAN certificate (certreq format without escaped quotes)
+        /// </summary>
+        private static string GetLocalIPAddressesForSANCertreq()
+        {
+            StringBuilder sb = new StringBuilder();
+            try
+            {
+                string hostName = Dns.GetHostName();
+                IPAddress[] addresses = Dns.GetHostAddresses(hostName);
+                
+                foreach (IPAddress ip in addresses)
+                {
+                    // Only IPv4 addresses
+                    if (ip.AddressFamily == AddressFamily.InterNetwork)
+                    {
+                        sb.AppendFormat("_continue_ = \"ipaddress={0}&\"\n", ip.ToString());
+                    }
+                }
+                
+                // Always add localhost IP
+                sb.Append("_continue_ = \"ipaddress=127.0.0.1\"\n");
+            }
+            catch
+            {
+                // Fallback - just localhost
+                sb.Append("_continue_ = \"ipaddress=127.0.0.1\"\n");
+            }
+            return sb.ToString();
+        }
 
         public static X509Certificate2 GetOrCreateCertificate(Action<string> log)
         {
@@ -162,6 +225,9 @@ namespace Win7App
                     string infPath = Path.Combine(tempDir, "win7vm_prog.inf");
                     string cerPath = Path.Combine(tempDir, "win7vm_prog.cer");
                     
+                    // Get local IP addresses for SAN
+                    string ipAddresses = GetLocalIPAddressesForSAN();
+                    
                     string inf = String.Format(@"[Version]
 Signature=""$Windows NT$""
 
@@ -187,11 +253,16 @@ ValidityPeriodUnits = 10
 OID=1.3.6.1.5.5.7.3.1
 
 [Extensions]
+; Basic Constraints - mark as CA so Android accepts it as trusted CA
+2.5.29.19 = ""{{text}}ca=true""
+; Subject Alternative Names - include all local IPs
 2.5.29.17 = ""{{text}}""
 _continue_ = ""dns=localhost&""
-_continue_ = ""dns=Win7VirtualMonitor""
-");
+_continue_ = ""dns=Win7VirtualMonitor&""
+{0}", ipAddresses);
                     File.WriteAllText(infPath, inf, Encoding.ASCII);
+                    
+                    log(String.Format("Certificate will include local IP addresses in SAN"));
                     
                     // Run certreq to create certificate
                     ProcessStartInfo psi = new ProcessStartInfo();
@@ -403,15 +474,32 @@ _continue_ = ""dns=Win7VirtualMonitor""
         }
 
         /// <summary>
-        /// Export public certificate (.cer) untuk diimpor di Android
+        /// Export public certificate untuk diimpor di Android
+        /// Export dalam 2 format: .cer (DER) dan .crt (PEM) untuk kompatibilitas maksimal
         /// </summary>
         private static void ExportPublicCertificate(X509Certificate2 cert, Action<string> log)
         {
             try
             {
+                // Export as DER format (.cer) - some Android versions prefer this
                 byte[] cerData = cert.Export(X509ContentType.Cert);
                 File.WriteAllBytes(CERT_CER_PATH, cerData);
                 log(String.Format("Public certificate exported to: {0}", CERT_CER_PATH));
+                
+                // Also export as PEM format (.crt) - more compatible with Android
+                string pemPath = CERT_CER_PATH.Replace(".cer", ".crt");
+                string base64 = Convert.ToBase64String(cerData);
+                StringBuilder pem = new StringBuilder();
+                pem.AppendLine("-----BEGIN CERTIFICATE-----");
+                // Split base64 into 64-character lines
+                for (int i = 0; i < base64.Length; i += 64)
+                {
+                    int len = Math.Min(64, base64.Length - i);
+                    pem.AppendLine(base64.Substring(i, len));
+                }
+                pem.AppendLine("-----END CERTIFICATE-----");
+                File.WriteAllText(pemPath, pem.ToString());
+                log(String.Format("PEM certificate exported to: {0}", pemPath));
             }
             catch (Exception ex)
             {
@@ -504,7 +592,11 @@ _continue_ = ""dns=Win7VirtualMonitor""
                 // Create INF file for certreq - Windows 7 with .NET 4.8 (TLS 1.2 support)
                 // Using Microsoft Enhanced RSA and AES Provider (ProviderType=24)
                 // SHA256 hash for modern browser compatibility
-                string inf = @"[Version]
+                
+                // Get local IP addresses for SAN
+                string ipAddresses = GetLocalIPAddressesForSANCertreq();
+                
+                string inf = String.Format(@"[Version]
 Signature=""$Windows NT$""
 
 [NewRequest]
@@ -529,11 +621,16 @@ ValidityPeriodUnits = 10
 OID=1.3.6.1.5.5.7.3.1
 
 [Extensions]
-2.5.29.17 = ""{text}""
+; Basic Constraints - mark as CA so Android accepts it as trusted CA
+2.5.29.19 = ""{{text}}ca=true""
+; Subject Alternative Names - include all local IPs
+2.5.29.17 = ""{{text}}""
 _continue_ = ""dns=localhost&""
-_continue_ = ""dns=Win7VirtualMonitor""
-";
+_continue_ = ""dns=Win7VirtualMonitor&""
+{0}", ipAddresses);
                 File.WriteAllText(infPath, inf, Encoding.ASCII);
+                
+                log(String.Format("Certificate will include local IP addresses in SAN"));
 
                 // Run certreq to create certificate
                 ProcessStartInfo psi = new ProcessStartInfo();

@@ -1,3 +1,5 @@
+<img width="354" height="393" alt="{84392294-108F-4E31-9DA6-464B29E143C2}" src="https://github.com/user-attachments/assets/293060d1-51e6-48b1-bf5c-3a2088a63b36" />
+
 Windows 7 (x86) sample app and MSI installer scaffold
 
 Prerequisites:

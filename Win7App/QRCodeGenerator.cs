@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Text;
+using QRCoder;
 
 namespace Win7App
 {
@@ -21,37 +22,70 @@ namespace Win7App
         /// </summary>
         public static Bitmap GenerateQRCode(string text, int size = 150)
         {
-            // Simple QR code generation using a basic encoding
-            // For a complete solution, we'd need full QR encoding
-            // This creates a visual representation using a pattern-based approach
-            
-            int moduleCount = 21; // Version 1 QR code
-            bool[,] modules = EncodeToModules(text, moduleCount);
-            
-            Bitmap bmp = new Bitmap(size, size);
-            using (Graphics g = Graphics.FromImage(bmp))
+            try
+            {
+                using (var qrGenerator = new QRCoder.QRCodeGenerator())
+                {
+                    var qrData = qrGenerator.CreateQrCode(text, QRCoder.QRCodeGenerator.ECCLevel.Q);
+                    using (var qrCode = new QRCoder.QRCode(qrData))
+                    {
+                        int moduleCount = qrData.ModuleMatrix.Count;
+                        int pixelsPerModule = Math.Max(1, size / (moduleCount + 8));
+                        Bitmap bmp = qrCode.GetGraphic(pixelsPerModule, Color.Black, Color.White, true);
+
+                        if (bmp.Width != size || bmp.Height != size)
+                        {
+                            Bitmap resized = new Bitmap(size, size);
+                            using (Graphics g = Graphics.FromImage(resized))
+                            {
+                                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+                                g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+                                g.DrawImage(bmp, 0, 0, size, size);
+                            }
+                            bmp.Dispose();
+                            return resized;
+                        }
+
+                        return bmp;
+                    }
+                }
+            }
+            catch
+            {
+                // Fallback to built-in/simple renderer below
+            }
+
+            // Fallback: simple renderer (kept for safety when QRCoder isn't available)
+            int moduleCountFallback = 21; // Version 1 QR code
+            bool[,] modules = EncodeToModules(text, moduleCountFallback);
+            Bitmap bmpFallback = new Bitmap(size, size);
+            using (Graphics g = Graphics.FromImage(bmpFallback))
             {
                 g.Clear(Color.White);
-                
-                float moduleSize = (float)size / (moduleCount + 8); // Add quiet zone
-                float offset = moduleSize * 4; // Quiet zone
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+                g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.None;
 
-                for (int y = 0; y < moduleCount; y++)
+                int totalModulesWithQuiet = moduleCountFallback + 8; // 4-module quiet zone on each side
+                int moduleSizePx = Math.Max(1, size / totalModulesWithQuiet);
+                int actualSizePx = moduleSizePx * totalModulesWithQuiet;
+                int offset = (size - actualSizePx) / 2; // center if rounding occurred
+
+                for (int y = 0; y < moduleCountFallback; y++)
                 {
-                    for (int x = 0; x < moduleCount; x++)
+                    for (int x = 0; x < moduleCountFallback; x++)
                     {
                         if (modules[y, x])
                         {
-                            g.FillRectangle(Brushes.Black, 
-                                offset + x * moduleSize, 
-                                offset + y * moduleSize, 
-                                moduleSize, moduleSize);
+                            int rx = offset + (4 + x) * moduleSizePx;
+                            int ry = offset + (4 + y) * moduleSizePx;
+                            g.FillRectangle(Brushes.Black, rx, ry, moduleSizePx, moduleSizePx);
                         }
                     }
                 }
             }
-            
-            return bmp;
+
+            return bmpFallback;
         }
 
         private static bool[,] EncodeToModules(string text, int size)

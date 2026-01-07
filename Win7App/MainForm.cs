@@ -73,122 +73,88 @@ namespace Win7App
 
         private void UpdateIPList()
         {
-            StringBuilder sb = new StringBuilder();
             _serverUrls.Clear();
-            
+
             try
             {
                 string hostName = Dns.GetHostName();
                 IPAddress[] addresses = Dns.GetHostAddresses(hostName);
-                bool first = true;
-                string firstIp = "";
 
                 foreach (IPAddress ip in addresses)
                 {
                     // Hanya tampilkan IPv4
                     if (ip.AddressFamily == AddressFamily.InterNetwork)
                     {
-                        if (first)
-                        {
-                            firstIp = ip.ToString();
-                        }
-                        
                         // Add HTTP URL
                         string httpUrl = String.Format("http://{0}:8080", ip.ToString());
                         _serverUrls.Add(httpUrl);
-                        
+
                         // Add HTTPS URL if enabled
                         if (chkEnableHttps.Checked)
                         {
                             string httpsUrl = String.Format("https://{0}:8081", ip.ToString());
                             _serverUrls.Add(httpsUrl);
                         }
-                        
-                        first = false;
-                    }
-                }
-
-                if (string.IsNullOrEmpty(firstIp))
-                {
-                    sb.Append("Server: (tidak ada IP ditemukan)");
-                }
-                else
-                {
-                    sb.Append(String.Format("HTTP: {0}:8080", firstIp));
-                    if (chkEnableHttps.Checked)
-                    {
-                        sb.Append(String.Format("  |  HTTPS: {0}:8081", firstIp));
                     }
                 }
             }
             catch (Exception)
             {
-                sb.Append("Server: (error mendapatkan IP)");
+                // ignore errors getting IPs
             }
 
-            labelIPs.Text = sb.ToString();
+            // Populate model dropdown with available server URLs
+            if (this.comboModels != null)
+            {
+                comboModels.Items.Clear();
+                foreach (string url in _serverUrls)
+                {
+                    comboModels.Items.Add(url);
+                }
+
+                // Prefer HTTPS by default if available
+                int defaultIndex = -1;
+                for (int i = 0; i < comboModels.Items.Count; i++)
+                {
+                    string item = comboModels.Items[i].ToString();
+                    if (item.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                    {
+                        defaultIndex = i;
+                        break;
+                    }
+                }
+
+                if (defaultIndex >= 0)
+                    comboModels.SelectedIndex = defaultIndex;
+                else if (comboModels.Items.Count > 0)
+                    comboModels.SelectedIndex = 0;
+            }
         }
 
-        private void buttonQR_Click(object sender, EventArgs e)
+        private void comboModels_SelectedIndexChanged(object sender, EventArgs e)
         {
-            _qrVisible = !_qrVisible;
-            
-            if (_qrVisible)
+            if (comboModels == null || comboModels.SelectedIndex < 0)
             {
-                GenerateQRCodes();
-                panelQR.Visible = true;
-                panelQR.Height = 130;
-                textLog.Top = panelQR.Bottom + 6;
-                textLog.Height = this.ClientSize.Height - textLog.Top - 12;
-                buttonQR.Text = "Hide QR";
+                if (pictureBoxQR != null) pictureBoxQR.Image = null;
+                return;
             }
-            else
+
+            string url = comboModels.Items[comboModels.SelectedIndex].ToString();
+            try
             {
-                panelQR.Controls.Clear();
-                panelQR.Visible = false;
-                panelQR.Height = 0;
-                textLog.Top = 180;
-                textLog.Height = this.ClientSize.Height - textLog.Top - 12;
-                buttonQR.Text = "Show QR";
+                if (pictureBoxQR != null)
+                {
+                    pictureBoxQR.BackColor = Color.White;
+                    pictureBoxQR.Image = QRCodeGenerator.GenerateQRCode(url, 150);
+                }
             }
-        }
-
-        private void GenerateQRCodes()
-        {
-            panelQR.Controls.Clear();
-            
-            foreach (string url in _serverUrls)
+            catch
             {
-                Panel itemPanel = new Panel();
-                itemPanel.Width = 130;
-                itemPanel.Height = 120;
-                itemPanel.Margin = new Padding(5);
-
-                PictureBox pb = new PictureBox();
-                pb.Width = 100;
-                pb.Height = 100;
-                pb.Location = new Point(15, 0);
-                pb.SizeMode = PictureBoxSizeMode.Zoom;
-                
-                try
+                if (pictureBoxQR != null)
                 {
-                    pb.Image = QRCodeGenerator.GenerateQRCode(url, 100);
+                    pictureBoxQR.Image = null;
+                    pictureBoxQR.BackColor = Color.Gray;
                 }
-                catch
-                {
-                    pb.BackColor = Color.Gray;
-                }
-                
-                Label lbl = new Label();
-                lbl.Text = url.Replace("http://", "").Replace(":8080", "");
-                lbl.Location = new Point(0, 102);
-                lbl.Width = 130;
-                lbl.TextAlign = ContentAlignment.MiddleCenter;
-                lbl.Font = new Font(lbl.Font.FontFamily, 7);
-
-                itemPanel.Controls.Add(pb);
-                itemPanel.Controls.Add(lbl);
-                panelQR.Controls.Add(itemPanel);
             }
         }
 

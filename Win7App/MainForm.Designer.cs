@@ -15,9 +15,8 @@ namespace Win7App
         private System.Windows.Forms.CheckBox chkStartWithWindows;
         private System.Windows.Forms.CheckBox chkEnableAudio;
         private System.Windows.Forms.CheckBox chkEnableHttps;
-        private System.Windows.Forms.Label labelIPs;
-        private System.Windows.Forms.Button buttonQR;
-        private System.Windows.Forms.FlowLayoutPanel panelQR;
+        private System.Windows.Forms.ComboBox comboModels;
+        private System.Windows.Forms.PictureBox pictureBoxQR;
         private System.Windows.Forms.Label labelUacStatus;
         private System.Windows.Forms.Button buttonUacToggle;
         private System.Windows.Forms.GroupBox groupUac;
@@ -44,9 +43,8 @@ namespace Win7App
             this.chkStartWithWindows = new System.Windows.Forms.CheckBox();
             this.chkEnableAudio = new System.Windows.Forms.CheckBox();
             this.chkEnableHttps = new System.Windows.Forms.CheckBox();
-            this.labelIPs = new System.Windows.Forms.Label();
-            this.buttonQR = new System.Windows.Forms.Button();
-            this.panelQR = new System.Windows.Forms.FlowLayoutPanel();
+            this.comboModels = new System.Windows.Forms.ComboBox();
+            this.pictureBoxQR = new System.Windows.Forms.PictureBox();
             this.labelUacStatus = new System.Windows.Forms.Label();
             this.buttonUacToggle = new System.Windows.Forms.Button();
             this.groupUac = new System.Windows.Forms.GroupBox();
@@ -97,12 +95,12 @@ namespace Win7App
             // textLog
             // 
             this.textLog.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) | System.Windows.Forms.AnchorStyles.Left) | System.Windows.Forms.AnchorStyles.Right)));
-            this.textLog.Location = new System.Drawing.Point(12, 180);
+            this.textLog.Location = new System.Drawing.Point(12, 142);
             this.textLog.Multiline = true;
             this.textLog.Name = "textLog";
             this.textLog.ReadOnly = true;
             this.textLog.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
-            this.textLog.Size = new System.Drawing.Size(360, 80);
+            this.textLog.Size = new System.Drawing.Size(200, 120);
             this.textLog.TabIndex = 4;
             // 
             // label1
@@ -113,6 +111,7 @@ namespace Win7App
             this.label1.Size = new System.Drawing.Size(80, 13);
             this.label1.TabIndex = 5;
             this.label1.Text = "Port:8080/8081";
+            this.label1.Visible = false;
             // 
             // labelPassword
             // 
@@ -177,7 +176,7 @@ namespace Win7App
             // 
             // buttonExportCert
             // 
-            this.buttonExportCert.Location = new System.Drawing.Point(330, 90);
+            this.buttonExportCert.Location = new System.Drawing.Point(288, 64);
             this.buttonExportCert.Name = "buttonExportCert";
             this.buttonExportCert.Size = new System.Drawing.Size(42, 23);
             this.buttonExportCert.TabIndex = 16;
@@ -187,8 +186,7 @@ namespace Win7App
             // 
             // buttonExportLog
             // 
-            this.buttonExportLog.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-            this.buttonExportLog.Location = new System.Drawing.Point(290, 262);
+            this.buttonExportLog.Location = new System.Drawing.Point(220, 240);
             this.buttonExportLog.Name = "buttonExportLog";
             this.buttonExportLog.Size = new System.Drawing.Size(82, 23);
             this.buttonExportLog.TabIndex = 17;
@@ -196,43 +194,34 @@ namespace Win7App
             this.buttonExportLog.UseVisualStyleBackColor = true;
             this.buttonExportLog.Click += new System.EventHandler(this.buttonExportLog_Click);
             // 
-            // labelIPs
+            // comboModels
             // 
-            this.labelIPs.Location = new System.Drawing.Point(12, 118);
-            this.labelIPs.Name = "labelIPs";
-            this.labelIPs.Size = new System.Drawing.Size(280, 26);
-            this.labelIPs.TabIndex = 11;
-            this.labelIPs.Text = "Server IPs: -";
+            this.comboModels.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.comboModels.FormattingEnabled = true;
+            this.comboModels.Location = new System.Drawing.Point(12, 118);
+            this.comboModels.Name = "comboModels";
+            this.comboModels.Size = new System.Drawing.Size(200, 21);
+            this.comboModels.TabIndex = 11;
+            this.comboModels.SelectedIndexChanged += new System.EventHandler(this.comboModels_SelectedIndexChanged);
             // 
-            // buttonQR
+            // pictureBoxQR
             // 
-            this.buttonQR.Location = new System.Drawing.Point(298, 113);
-            this.buttonQR.Name = "buttonQR";
-            this.buttonQR.Size = new System.Drawing.Size(74, 23);
-            this.buttonQR.TabIndex = 12;
-            this.buttonQR.Text = "Show QR";
-            this.buttonQR.UseVisualStyleBackColor = true;
-            this.buttonQR.Click += new System.EventHandler(this.buttonQR_Click);
-            // 
-            // panelQR
-            // 
-            this.panelQR.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left) | System.Windows.Forms.AnchorStyles.Right)));
-            this.panelQR.AutoScroll = true;
-            this.panelQR.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
-            this.panelQR.Location = new System.Drawing.Point(12, 147);
-            this.panelQR.Name = "panelQR";
-            this.panelQR.Size = new System.Drawing.Size(360, 0);
-            this.panelQR.TabIndex = 13;
-            this.panelQR.Visible = false;
+            this.pictureBoxQR.Location = new System.Drawing.Point(220, 118);
+            this.pictureBoxQR.Name = "pictureBoxQR";
+            this.pictureBoxQR.Size = new System.Drawing.Size(120, 120);
+            this.pictureBoxQR.TabIndex = 12;
+            this.pictureBoxQR.TabStop = false;
+            this.pictureBoxQR.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
+            this.pictureBoxQR.SizeMode = System.Windows.Forms.PictureBoxSizeMode.Zoom;
             // 
             // groupUac
             // 
             this.groupUac.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left) | System.Windows.Forms.AnchorStyles.Right)));
             this.groupUac.Controls.Add(this.labelUacStatus);
             this.groupUac.Controls.Add(this.buttonUacToggle);
-            this.groupUac.Location = new System.Drawing.Point(12, 294);
+            this.groupUac.Location = new System.Drawing.Point(12, 280);
             this.groupUac.Name = "groupUac";
-            this.groupUac.Size = new System.Drawing.Size(360, 55);
+            this.groupUac.Size = new System.Drawing.Size(328, 55);
             this.groupUac.TabIndex = 15;
             this.groupUac.TabStop = false;
             this.groupUac.Text = "UAC Screen Capture";
@@ -241,14 +230,14 @@ namespace Win7App
             // 
             this.labelUacStatus.Location = new System.Drawing.Point(6, 16);
             this.labelUacStatus.Name = "labelUacStatus";
-            this.labelUacStatus.Size = new System.Drawing.Size(230, 32);
+            this.labelUacStatus.Size = new System.Drawing.Size(196, 32);
             this.labelUacStatus.TabIndex = 0;
             this.labelUacStatus.Text = "Checking UAC status...";
             // 
             // buttonUacToggle
             // 
             this.buttonUacToggle.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
-            this.buttonUacToggle.Location = new System.Drawing.Point(242, 18);
+            this.buttonUacToggle.Location = new System.Drawing.Point(208, 18);
             this.buttonUacToggle.Name = "buttonUacToggle";
             this.buttonUacToggle.Size = new System.Drawing.Size(112, 28);
             this.buttonUacToggle.TabIndex = 1;
@@ -260,14 +249,13 @@ namespace Win7App
             //  
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(384, 361);
+            this.ClientSize = new System.Drawing.Size(352, 361);
             this.Controls.Add(this.buttonExportLog);
             this.Controls.Add(this.groupUac);
             this.Controls.Add(this.buttonExportCert);
             this.Controls.Add(this.chkEnableHttps);
-            this.Controls.Add(this.panelQR);
-            this.Controls.Add(this.buttonQR);
-            this.Controls.Add(this.labelIPs);
+            this.Controls.Add(this.pictureBoxQR);
+            this.Controls.Add(this.comboModels);
             this.Controls.Add(this.chkEnableAudio);
             this.Controls.Add(this.chkStartWithWindows);
             this.Controls.Add(this.chkAutoStart);

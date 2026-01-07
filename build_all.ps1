@@ -54,6 +54,37 @@ if (-not (Test-Path $outputDir)) {
 if (-not $SkipBuild) {
     Write-Title "Step 1: Building Release EXE"
     
+    # Ensure nuget.exe is available and restore packages (for classic packages.config projects)
+    $nugetExe = Join-Path $scriptDir 'nuget.exe'
+    if (-not (Test-Path $nugetExe)) {
+        Write-Host "Downloading nuget.exe..."
+        $nugetUrl = 'https://dist.nuget.org/win-x86-commandline/latest/nuget.exe'
+        try {
+            Invoke-WebRequest -Uri $nugetUrl -OutFile $nugetExe -UseBasicParsing -ErrorAction Stop
+            Write-Success "Downloaded nuget.exe"
+        } catch {
+            Write-Warn "Could not download nuget.exe: $($_.Exception.Message)"
+        }
+    }
+
+    if (Test-Path $nugetExe) {
+        Write-Host "Installing NuGet packages from packages.config..."
+        $pkgConfig = Join-Path $win7AppDir 'packages.config'
+        $packagesOut = Join-Path $win7AppDir 'packages'
+        if (Test-Path $pkgConfig) {
+            & $nugetExe install $pkgConfig -OutputDirectory $packagesOut
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warn "NuGet install failed with exit code $LASTEXITCODE"
+            } else {
+                Write-Success "NuGet packages installed to: $packagesOut"
+            }
+        } else {
+            Write-Warn "No packages.config found at: $pkgConfig"
+        }
+    } else {
+        Write-Warn "nuget.exe not available; continuing without package install"
+    }
+
     # Find MSBuild
     $msbuildPaths = @(
         "${env:ProgramFiles}\Microsoft Visual Studio\2022\*\MSBuild\Current\Bin\MSBuild.exe",

@@ -114,8 +114,8 @@ if (Test-Path $tempDir) {
 }
 New-Item -ItemType Directory -Path $tempDir | Out-Null
 
-# Copy files
-Copy-Item $exePath $tempDir
+# Copy all Release files (exe, dlls, certs)
+Copy-Item -Path (Join-Path $releaseDir "*") -Destination $tempDir -Recurse -Force
 
 # Create ZIP
 Compress-Archive -Path "$tempDir\*" -DestinationPath $zipPath -CompressionLevel Optimal

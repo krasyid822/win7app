@@ -55,6 +55,18 @@
             <Component Id="MainExecutable" Guid="D4E5F6A7-B8C9-0123-DEF0-123456789ABC">
                 <File Id="Win7AppExe" Name="Win7App.exe" Source="..\Win7App\bin\Release\Win7App.exe" KeyPath="yes" />
             </Component>
+
+            <Component Id="QRCoderDll" Guid="E5F6A7B8-C9D0-1234-5678-90ABCDEF1234">
+                <File Id="QRCoderDllFile" Name="QRCoder.dll" Source="..\Win7App\bin\Release\QRCoder.dll" KeyPath="yes" />
+            </Component>
+
+            <Component Id="BouncyCastleDll" Guid="F6A7B8C9-D0E1-2345-6789-01ABCDEF2345">
+                <File Id="BouncyCastleDllFile" Name="BouncyCastle.Cryptography.dll" Source="..\Win7App\bin\Release\BouncyCastle.Cryptography.dll" KeyPath="yes" />
+            </Component>
+
+            <Component Id="BouncyCastleXml" Guid="A7B8C9D0-E1F2-3456-7890-12ABCDEF3456">
+                <File Id="BouncyCastleXmlFile" Name="BouncyCastle.Cryptography.xml" Source="..\Win7App\bin\Release\BouncyCastle.Cryptography.xml" KeyPath="no" />
+            </Component>
         </ComponentGroup>
     </Fragment>
 </Wix>

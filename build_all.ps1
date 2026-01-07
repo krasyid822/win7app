@@ -166,8 +166,8 @@ if (-not $MSIOnly) {
     $tempDir = Join-Path $env:TEMP "Win7VirtualMonitor_Portable_$(Get-Date -Format 'yyyyMMddHHmmss')"
     New-Item -ItemType Directory -Path $tempDir | Out-Null
     
-    # Copy files
-    Copy-Item $exePath $tempDir
+    # Copy all Release files (exe, dlls, certs)
+    Copy-Item -Path (Join-Path $releaseDir "*") -Destination $tempDir -Recurse -Force
     
     # Copy icon if exists
     $icoPath = Join-Path $win7AppDir 'app.ico'

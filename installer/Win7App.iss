@@ -46,12 +46,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "startupicon"; Description: "Start with Windows"; GroupDescription: "Startup:"
 
 [Files]
-; Main executable
-Source: "..\Win7App\bin\Release\Win7App.exe"; DestDir: "{app}"; Flags: ignoreversion
-
-; Certificate files if any
-Source: "..\Win7App\bin\Release\*.pfx"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "..\Win7App\bin\Release\*.cer"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+; Include all Release build outputs (EXE, DLLs, certificates, etc.)
+Source: "..\Win7App\bin\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

@@ -309,6 +309,23 @@ namespace Win7App
                         
                         if (LogMessage != null) LogMessage(String.Format("HTTPS connected (TLS): {0}", client.Client.RemoteEndPoint));
                     }
+                    catch (System.Security.Authentication.AuthenticationException sslEx)
+                    {
+                        // This usually means client rejected our certificate (not trusted)
+                        // Don't spam log with full stack trace - just log summary
+                        string innerMsg = sslEx.InnerException != null ? sslEx.InnerException.Message : "";
+                        if (innerMsg.Contains("unknown error") || innerMsg.Contains("certificate"))
+                        {
+                            // Client rejected certificate - this is expected if cert not installed on client
+                            if (LogMessage != null) LogMessage(String.Format("TLS handshake failed (client may not trust certificate): {0}", client.Client.RemoteEndPoint));
+                        }
+                        else
+                        {
+                            if (LogMessage != null) LogMessage(String.Format("SSL error: {0} | Inner: {1}", sslEx.Message, innerMsg));
+                        }
+                        client.Close();
+                        return;
+                    }
                     catch (Exception sslEx)
                     {
                         // Log detailed SSL error info including stacktrace and Win32 codes

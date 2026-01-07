@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -7,6 +8,17 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Microsoft.Win32;
+using Org.BouncyCastle.Asn1;
+using Org.BouncyCastle.Asn1.X509;
+using Org.BouncyCastle.Crypto;
+using Org.BouncyCastle.Crypto.Generators;
+using Org.BouncyCastle.Crypto.Operators;
+using Org.BouncyCastle.Crypto.Parameters;
+using Org.BouncyCastle.Crypto.Prng;
+using Org.BouncyCastle.Math;
+using Org.BouncyCastle.Pkcs;
+using Org.BouncyCastle.Security;
+using Org.BouncyCastle.X509;
 
 namespace Win7App
 {
@@ -90,83 +102,119 @@ namespace Win7App
         {
             try
             {
-                // 1. Coba load dari file dulu
+                // 1. Try to load from file first
                 if (File.Exists(CERT_FILE_PATH))
                 {
                     try
                     {
-                        // Use PersistKeySet + UserKeySet for Windows 7 SslStream compatibility
-                        // DO NOT use MachineKeySet - causes permission issues
-                        X509Certificate2 cert = new X509Certificate2(CERT_FILE_PATH, CERT_PASSWORD,
-                            X509KeyStorageFlags.Exportable | 
-                            X509KeyStorageFlags.PersistKeySet | 
-                            X509KeyStorageFlags.UserKeySet);
-                            
-                        if (cert.NotAfter > DateTime.Now && cert.HasPrivateKey)
+                        // First, load PFX to get thumbprint
+                        X509Certificate2 fileCert = new X509Certificate2(CERT_FILE_PATH, CERT_PASSWORD,
+                            X509KeyStorageFlags.Exportable);
+                        string thumbprint = fileCert.Thumbprint;
+                        
+                        if (fileCert.NotAfter > DateTime.Now)
                         {
-                            // Verify private key is accessible
-                            try
+                            // IMPORTANT: Try to get certificate from store first - it has proper key binding
+                            X509Store myStore = new X509Store(StoreName.My, StoreLocation.CurrentUser);
+                            myStore.Open(OpenFlags.ReadOnly);
+                            X509Certificate2Collection storeCerts = myStore.Certificates.Find(
+                                X509FindType.FindByThumbprint, thumbprint, false);
+                            myStore.Close();
+                            
+                            if (storeCerts.Count > 0 && storeCerts[0].HasPrivateKey)
                             {
-                                AsymmetricAlgorithm pk = cert.PrivateKey;
-                                RSACryptoServiceProvider rsa = pk as RSACryptoServiceProvider;
-                                if (rsa != null)
+                                X509Certificate2 storeCert = storeCerts[0];
+                                // Verify private key is accessible
+                                try
                                 {
-                                    log(String.Format("Loaded SSL cert: HasPK=true, KeySize={0}, Provider={1}", 
-                                        rsa.KeySize, rsa.CspKeyContainerInfo.ProviderName));
+                                    AsymmetricAlgorithm pk = storeCert.PrivateKey;
+                                    RSACryptoServiceProvider rsa = pk as RSACryptoServiceProvider;
+                                    if (rsa != null)
+                                    {
+                                        log(String.Format("Loaded from store: HasPK=true, KeySize={0}, Provider={1}", 
+                                            rsa.KeySize, rsa.CspKeyContainerInfo.ProviderName));
+                                    }
+                                    
+                                    // Pastikan .cer file ada untuk Android
+                                    ExportPublicCertificate(storeCert, log);
+                                    // Auto-install ke Trusted Root untuk Windows
+                                    InstallCertificateToTrustedRoot(storeCert, log);
+                                    return storeCert;
                                 }
-                                else
+                                catch (Exception pkEx)
                                 {
-                                    log(String.Format("Loaded SSL cert: HasPK=true, PKType={0}", pk.GetType().Name));
+                                    log(String.Format("Store cert private key error: {0}", pkEx.Message));
                                 }
-                            }
-                            catch (Exception pkEx)
-                            {
-                                log(String.Format("WARNING: PrivateKey access error: {0}", pkEx.Message));
-                                // Private key tidak bisa diakses - perlu regenerate
-                                throw new Exception("Private key not accessible");
                             }
                             
-                            // Pastikan .cer file ada untuk Android
-                            ExportPublicCertificate(cert, log);
-                            // Auto-install ke Trusted Root untuk Windows
-                            InstallCertificateToTrustedRoot(cert, log);
-                            return cert;
+                            // Fallback: load from PFX with proper flags
+                            log("Certificate not in store, loading from PFX file...");
+                            X509Certificate2 cert = new X509Certificate2(CERT_FILE_PATH, CERT_PASSWORD,
+                                X509KeyStorageFlags.Exportable | 
+                                X509KeyStorageFlags.PersistKeySet | 
+                                X509KeyStorageFlags.UserKeySet);
+                                
+                            if (cert.HasPrivateKey)
+                            {
+                                // Verify private key is accessible
+                                try
+                                {
+                                    AsymmetricAlgorithm pk = cert.PrivateKey;
+                                    RSACryptoServiceProvider rsa = pk as RSACryptoServiceProvider;
+                                    if (rsa != null)
+                                    {
+                                        log(String.Format("Loaded from PFX: HasPK=true, KeySize={0}, Provider={1}", 
+                                            rsa.KeySize, rsa.CspKeyContainerInfo.ProviderName));
+                                    }
+                                }
+                                catch (Exception pkEx)
+                                {
+                                    log(String.Format("WARNING: PrivateKey access error: {0}", pkEx.Message));
+                                    throw new Exception("Private key not accessible");
+                                }
+                                
+                                // Pastikan .cer file ada untuk Android
+                                ExportPublicCertificate(cert, log);
+                                // Auto-install ke Trusted Root untuk Windows
+                                InstallCertificateToTrustedRoot(cert, log);
+                                return cert;
+                            }
                         }
                         log("Certificate expired or no private key, creating new one...");
                     }
                     catch (Exception ex)
                     {
-                        log(String.Format("Failed to load cert file: {0}", ex.Message));
+                        log(String.Format("Failed to load cert: {0}", ex.Message));
                     }
                     // Delete invalid cert file
                     try { File.Delete(CERT_FILE_PATH); } catch { }
                 }
 
-                // 2. PRIORITAS PERTAMA: Buat certificate secara programatis dengan BouncyCastle-style
-                // Ini adalah metode paling reliable untuk Windows 7 karena menggunakan CSP murni
-                log("Creating new self-signed SSL certificate (programmatic)...");
-                X509Certificate2 newCert = CreateCertificateProgrammatically(log);
+                // 2. PRIORITAS PERTAMA: BouncyCastle - generates pure RSA key compatible with .NET SslStream
+                log("Creating new self-signed SSL certificate (BouncyCastle)...");
+                X509Certificate2 newCert = CreateCertificateWithBouncyCastle(log);
                 if (newCert != null && newCert.HasPrivateKey)
                 {
-                    log(String.Format("Certificate created programmatically: HasPrivateKey={0}", newCert.HasPrivateKey));
+                    log(String.Format("Certificate created with BouncyCastle: HasPrivateKey={0}", newCert.HasPrivateKey));
                     ExportPublicCertificate(newCert, log);
                     InstallCertificateToTrustedRoot(newCert, log);
                     return newCert;
                 }
 
-                // 3. Fallback: certreq
-                log("Trying certreq fallback...");
+                // 3. Fallback: PowerShell
+                log("Trying PowerShell fallback...");
+                newCert = CreateCertificateWithPowerShell(log);
+                if (newCert != null && newCert.HasPrivateKey)
+                {
+                    log(String.Format("Certificate from PowerShell: HasPrivateKey={0}", newCert.HasPrivateKey));
+                    ExportPublicCertificate(newCert, log);
+                    InstallCertificateToTrustedRoot(newCert, log);
+                    return newCert;
+                }
+
+                // 4. Fallback: legacy certreq
+                log("Trying legacy certreq...");
                 newCert = CreateCertificateWithCertreq(log);
-                if (newCert != null && newCert.HasPrivateKey)
-                {
-                    log(String.Format("Certificate from certreq: HasPrivateKey={0}", newCert.HasPrivateKey));
-                    ExportPublicCertificate(newCert, log);
-                    InstallCertificateToTrustedRoot(newCert, log);
-                    return newCert;
-                }
-
-                // 4. Fallback: makecert
-                newCert = CreateCertificateWithMakeCert(log);
                 if (newCert != null && newCert.HasPrivateKey) 
                 {
                     log(String.Format("Certificate from makecert: HasPrivateKey={0}", newCert.HasPrivateKey));
@@ -181,6 +229,146 @@ namespace Win7App
             catch (Exception ex)
             {
                 log(String.Format("Certificate error: {0}", ex.Message));
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Create certificate using BouncyCastle library - produces CSP-compatible keys for .NET SslStream
+        /// This is the most reliable method for Windows 10/11 where CNG keys don't work with SslStream
+        /// </summary>
+        private static X509Certificate2 CreateCertificateWithBouncyCastle(Action<string> log)
+        {
+            try
+            {
+                // Generate RSA key pair using BouncyCastle
+                var keyPairGenerator = new RsaKeyPairGenerator();
+                keyPairGenerator.Init(new KeyGenerationParameters(new SecureRandom(), 2048));
+                AsymmetricCipherKeyPair keyPair = keyPairGenerator.GenerateKeyPair();
+                
+                log("BouncyCastle RSA key pair generated (2048-bit)");
+                
+                // Create certificate generator
+                var certGen = new X509V3CertificateGenerator();
+                
+                // Serial number
+                BigInteger serialNumber = BigInteger.ProbablePrime(120, new SecureRandom());
+                certGen.SetSerialNumber(serialNumber);
+                
+                // Issuer and Subject
+                var issuerDN = new X509Name("CN=Win7VirtualMonitor");
+                var subjectDN = new X509Name("CN=Win7VirtualMonitor");
+                certGen.SetIssuerDN(issuerDN);
+                certGen.SetSubjectDN(subjectDN);
+                
+                // Validity
+                DateTime notBefore = DateTime.UtcNow.AddDays(-1);
+                DateTime notAfter = DateTime.UtcNow.AddYears(10);
+                certGen.SetNotBefore(notBefore);
+                certGen.SetNotAfter(notAfter);
+                
+                // Public key
+                certGen.SetPublicKey(keyPair.Public);
+                
+                // Extensions
+                // Basic Constraints - mark as CA for Android trust
+                certGen.AddExtension(X509Extensions.BasicConstraints, true, 
+                    new BasicConstraints(true));
+                
+                // Key Usage
+                certGen.AddExtension(X509Extensions.KeyUsage, true,
+                    new KeyUsage(KeyUsage.DigitalSignature | KeyUsage.KeyEncipherment | KeyUsage.KeyCertSign));
+                
+                // Extended Key Usage - Server Authentication
+                certGen.AddExtension(X509Extensions.ExtendedKeyUsage, false,
+                    new ExtendedKeyUsage(new[] { KeyPurposeID.IdKPServerAuth }));
+                
+                // Subject Alternative Names - include localhost and all local IPs
+                var sanList = new List<GeneralName>();
+                sanList.Add(new GeneralName(GeneralName.DnsName, "localhost"));
+                sanList.Add(new GeneralName(GeneralName.DnsName, "Win7VirtualMonitor"));
+                sanList.Add(new GeneralName(GeneralName.IPAddress, "127.0.0.1"));
+                
+                try
+                {
+                    string hostName = Dns.GetHostName();
+                    IPAddress[] addresses = Dns.GetHostAddresses(hostName);
+                    foreach (IPAddress ip in addresses)
+                    {
+                        if (ip.AddressFamily == AddressFamily.InterNetwork)
+                        {
+                            sanList.Add(new GeneralName(GeneralName.IPAddress, ip.ToString()));
+                        }
+                    }
+                }
+                catch { }
+                
+                certGen.AddExtension(X509Extensions.SubjectAlternativeName, false,
+                    new GeneralNames(sanList.ToArray()));
+                
+                // Sign the certificate with SHA256
+                ISignatureFactory signatureFactory = new Asn1SignatureFactory("SHA256WithRSA", keyPair.Private);
+                Org.BouncyCastle.X509.X509Certificate bcCert = certGen.Generate(signatureFactory);
+                
+                log("BouncyCastle certificate generated with SHA256 signature");
+                
+                // Create PKCS12 store with private key
+                var store = new Pkcs12StoreBuilder().Build();
+                var certEntry = new X509CertificateEntry(bcCert);
+                store.SetCertificateEntry("Win7VirtualMonitor", certEntry);
+                store.SetKeyEntry("Win7VirtualMonitor", 
+                    new AsymmetricKeyEntry(keyPair.Private), 
+                    new[] { certEntry });
+                
+                // Export to PFX
+                using (var ms = new MemoryStream())
+                {
+                    store.Save(ms, CERT_PASSWORD.ToCharArray(), new SecureRandom());
+                    byte[] pfxBytes = ms.ToArray();
+                    
+                    // Save to file
+                    File.WriteAllBytes(CERT_FILE_PATH, pfxBytes);
+                    log("Certificate saved to PFX file");
+                    
+                    // Load as X509Certificate2 with proper flags for SslStream
+                    // CRITICAL: Use Exportable + PersistKeySet + UserKeySet for .NET Framework SslStream
+                    X509Certificate2 cert = new X509Certificate2(pfxBytes, CERT_PASSWORD,
+                        X509KeyStorageFlags.Exportable | 
+                        X509KeyStorageFlags.PersistKeySet | 
+                        X509KeyStorageFlags.UserKeySet);
+                    
+                    if (cert.HasPrivateKey)
+                    {
+                        // Verify the private key is accessible
+                        try
+                        {
+                            var pk = cert.PrivateKey;
+                            RSACryptoServiceProvider rsa = pk as RSACryptoServiceProvider;
+                            if (rsa != null)
+                            {
+                                log(String.Format("Private key loaded: CSP={0}, KeySize={1}", 
+                                    rsa.CspKeyContainerInfo.ProviderName, rsa.KeySize));
+                            }
+                            else
+                            {
+                                log(String.Format("Private key type: {0}", pk.GetType().Name));
+                            }
+                        }
+                        catch (Exception pkEx)
+                        {
+                            log(String.Format("Private key access warning: {0}", pkEx.Message));
+                        }
+                        
+                        return cert;
+                    }
+                }
+                
+                log("BouncyCastle certificate creation failed - no private key");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                log(String.Format("BouncyCastle error: {0}", ex.Message));
                 return null;
             }
         }
@@ -289,24 +477,81 @@ _continue_ = ""dns=Win7VirtualMonitor&""
                         string thumbprint = tempCert.Thumbprint;
                         log(String.Format("Certificate created, thumbprint: {0}", thumbprint));
                         
-                        // Export to PFX
-                        psi = new ProcessStartInfo();
-                        psi.FileName = "certutil.exe";
-                        psi.Arguments = String.Format("-user -exportpfx -p \"{0}\" My {1} \"{2}\"", 
-                            CERT_PASSWORD, thumbprint, pfxPath);
-                        psi.UseShellExecute = false;
-                        psi.RedirectStandardOutput = true;
-                        psi.RedirectStandardError = true;
-                        psi.CreateNoWindow = true;
+                        // IMPORTANT: Get certificate directly from store - this has correct private key binding
+                        // Loading from PFX creates a NEW key container which breaks SslStream
+                        X509Store myStore = new X509Store(StoreName.My, StoreLocation.CurrentUser);
+                        myStore.Open(OpenFlags.ReadOnly);
+                        X509Certificate2Collection certs = myStore.Certificates.Find(
+                            X509FindType.FindByThumbprint, thumbprint, false);
+                        myStore.Close();
                         
-                        proc = Process.Start(psi);
-                        proc.WaitForExit(30000);
+                        if (certs.Count > 0)
+                        {
+                            X509Certificate2 storeCert = certs[0];
+                            if (storeCert.HasPrivateKey)
+                            {
+                                // Verify private key type
+                                try
+                                {
+                                    AsymmetricAlgorithm pk = storeCert.PrivateKey;
+                                    if (pk is RSACryptoServiceProvider)
+                                    {
+                                        RSACryptoServiceProvider rsaCsp = (RSACryptoServiceProvider)pk;
+                                        log(String.Format("Private key from store: CSP={0}, Container={1}", 
+                                            rsaCsp.CspKeyContainerInfo.ProviderName,
+                                            rsaCsp.CspKeyContainerInfo.KeyContainerName));
+                                    }
+                                }
+                                catch (Exception pkEx)
+                                {
+                                    log(String.Format("Private key check: {0}", pkEx.Message));
+                                }
+                                
+                                // Also export to PFX for backup
+                                try
+                                {
+                                    byte[] pfxBytes = storeCert.Export(X509ContentType.Pfx, CERT_PASSWORD);
+                                    File.WriteAllBytes(CERT_FILE_PATH, pfxBytes);
+                                    log("Certificate exported to PFX file for backup");
+                                }
+                                catch (Exception exportEx)
+                                {
+                                    log(String.Format("PFX export note: {0}", exportEx.Message));
+                                }
+                                
+                                // Cleanup temp files
+                                try { File.Delete(infPath); } catch { }
+                                try { File.Delete(cerPath); } catch { }
+                                
+                                log(String.Format("Using certificate from store: HasPrivateKey={0}", storeCert.HasPrivateKey));
+                                return storeCert;
+                            }
+                        }
+                        
+                        // Fallback: try certutil export method
+                        log("Store lookup failed, trying certutil export...");
+                        
+                        // Export to PFX using certutil
+                        ProcessStartInfo psiExport = new ProcessStartInfo();
+                        psiExport.FileName = "certutil.exe";
+                        psiExport.Arguments = String.Format("-user -exportpfx -p \"{0}\" My {1} \"{2}\"", 
+                            CERT_PASSWORD, thumbprint, pfxPath);
+                        psiExport.UseShellExecute = false;
+                        psiExport.RedirectStandardOutput = true;
+                        psiExport.RedirectStandardError = true;
+                        psiExport.CreateNoWindow = true;
+                        
+                        Process procExport = Process.Start(psiExport);
+                        procExport.WaitForExit(30000);
                         
                         if (File.Exists(pfxPath))
                         {
-                            // Load with PersistKeySet for SslStream compatibility
+                            // Load with PersistKeySet + UserKeySet for SslStream compatibility
+                            // UserKeySet ensures key is stored in current user's key container
                             X509Certificate2 cert = new X509Certificate2(pfxPath, CERT_PASSWORD,
-                                X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet);
+                                X509KeyStorageFlags.Exportable | 
+                                X509KeyStorageFlags.PersistKeySet | 
+                                X509KeyStorageFlags.UserKeySet);
                             
                             if (cert.HasPrivateKey)
                             {
@@ -331,12 +576,20 @@ _continue_ = ""dns=Win7VirtualMonitor&""
                                 File.Copy(pfxPath, CERT_FILE_PATH, true);
                                 log("Certificate saved to file");
                                 
-                                // Cleanup
+                                // Cleanup temp files
                                 try { File.Delete(infPath); } catch { }
                                 try { File.Delete(cerPath); } catch { }
                                 try { File.Delete(pfxPath); } catch { }
                                 
-                                return cert;
+                                // Re-load from saved file to ensure clean key container
+                                // This fixes NTE_BAD_KEYSET error when key container from certreq conflicts
+                                X509Certificate2 finalCert = new X509Certificate2(CERT_FILE_PATH, CERT_PASSWORD,
+                                    X509KeyStorageFlags.Exportable | 
+                                    X509KeyStorageFlags.PersistKeySet | 
+                                    X509KeyStorageFlags.UserKeySet);
+                                log(String.Format("Certificate re-loaded from file: HasPrivateKey={0}", finalCert.HasPrivateKey));
+                                
+                                return finalCert;
                             }
                             else
                             {
@@ -524,18 +777,42 @@ _continue_ = ""dns=Win7VirtualMonitor&""
                 // Hapus file temp lama
                 try { File.Delete(tempPfxPath); } catch { }
                 
-                // Gunakan PowerShell dengan Import-Module PKI terlebih dahulu
+                // Get local IPs for SAN
+                StringBuilder ipList = new StringBuilder();
+                try
+                {
+                    string hostName = Dns.GetHostName();
+                    IPAddress[] addresses = Dns.GetHostAddresses(hostName);
+                    foreach (IPAddress ip in addresses)
+                    {
+                        if (ip.AddressFamily == AddressFamily.InterNetwork)
+                        {
+                            if (ipList.Length > 0) ipList.Append("','");
+                            ipList.Append(ip.ToString());
+                        }
+                    }
+                }
+                catch { }
+                
+                string dnsNames = ipList.Length > 0 
+                    ? String.Format("'localhost','Win7VirtualMonitor','127.0.0.1','{0}'", ipList.ToString())
+                    : "'localhost','Win7VirtualMonitor','127.0.0.1'";
+                
+                // Use RSA SChannel provider which is pure CSP (not CNG) - required for SslStream
+                // Also use -Provider parameter to force legacy CSP
                 string psScript = String.Format(
-                    "Import-Module PKI -ErrorAction SilentlyContinue; " +
-                    "$cert = New-SelfSignedCertificate -Subject '{0}' -DnsName 'localhost','Win7VirtualMonitor' " +
+                    "$cert = New-SelfSignedCertificate -Subject '{0}' -DnsName {1} " +
                     "-CertStoreLocation 'Cert:\\CurrentUser\\My' " +
                     "-KeyAlgorithm RSA -KeyLength 2048 " +
+                    "-Provider 'Microsoft RSA SChannel Cryptographic Provider' " +
                     "-NotAfter (Get-Date).AddYears(10) " +
                     "-KeyExportPolicy Exportable " +
-                    "-KeySpec KeyExchange; " +
-                    "$pwd = ConvertTo-SecureString -String '{1}' -Force -AsPlainText; " +
-                    "Export-PfxCertificate -Cert $cert -FilePath '{2}' -Password $pwd",
-                    CERT_SUBJECT, CERT_PASSWORD, tempPfxPath.Replace("\\", "\\\\"));
+                    "-KeyUsage DigitalSignature,KeyEncipherment " +
+                    "-TextExtension @('2.5.29.37={{text}}1.3.6.1.5.5.7.3.1'); " +
+                    "$pwd = ConvertTo-SecureString -String '{2}' -Force -AsPlainText; " +
+                    "Export-PfxCertificate -Cert $cert -FilePath '{3}' -Password $pwd | Out-Null; " +
+                    "Write-Host $cert.Thumbprint",
+                    CERT_SUBJECT, dnsNames, CERT_PASSWORD, tempPfxPath.Replace("\\", "\\\\"));
 
                 ProcessStartInfo psi = new ProcessStartInfo();
                 psi.FileName = "powershell.exe";
@@ -545,27 +822,47 @@ _continue_ = ""dns=Win7VirtualMonitor&""
                 psi.RedirectStandardError = true;
                 psi.CreateNoWindow = true;
 
-                log("Trying PowerShell PKI module...");
+                log("Trying PowerShell with RSA SChannel Provider (pure CSP)...");
                 Process proc = Process.Start(psi);
-                proc.WaitForExit(30000);
+                string output = proc.StandardOutput.ReadToEnd();
                 string error = proc.StandardError.ReadToEnd();
+                proc.WaitForExit(30000);
+                
+                string thumbprint = output.Trim();
 
                 if (File.Exists(tempPfxPath))
                 {
-                    X509Certificate2 cert = new X509Certificate2(tempPfxPath, CERT_PASSWORD,
-                        X509KeyStorageFlags.Exportable | X509KeyStorageFlags.UserKeySet);
+                    // Get certificate from store (has proper key binding)
+                    X509Store myStore = new X509Store(StoreName.My, StoreLocation.CurrentUser);
+                    myStore.Open(OpenFlags.ReadOnly);
+                    X509Certificate2Collection certs = myStore.Certificates.Find(
+                        X509FindType.FindByThumbprint, thumbprint, false);
+                    myStore.Close();
                     
-                    if (cert.HasPrivateKey)
+                    if (certs.Count > 0 && certs[0].HasPrivateKey)
+                    {
+                        X509Certificate2 cert = certs[0];
+                        File.Copy(tempPfxPath, CERT_FILE_PATH, true);
+                        try { File.Delete(tempPfxPath); } catch { }
+                        log(String.Format("Certificate created via PowerShell RSA SChannel: HasPrivateKey={0}", cert.HasPrivateKey));
+                        return cert;
+                    }
+                    
+                    // Fallback: load from PFX
+                    X509Certificate2 pfxCert = new X509Certificate2(tempPfxPath, CERT_PASSWORD,
+                        X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet | X509KeyStorageFlags.UserKeySet);
+                    
+                    if (pfxCert.HasPrivateKey)
                     {
                         File.Copy(tempPfxPath, CERT_FILE_PATH, true);
                         try { File.Delete(tempPfxPath); } catch { }
-                        log(String.Format("Certificate created via PowerShell: HasPrivateKey={0}", cert.HasPrivateKey));
-                        return cert;
+                        log(String.Format("Certificate loaded from PFX: HasPrivateKey={0}", pfxCert.HasPrivateKey));
+                        return pfxCert;
                     }
                 }
                 
                 if (!string.IsNullOrEmpty(error) && error.Length > 10)
-                    log(String.Format("PowerShell: {0}", error.Substring(0, Math.Min(100, error.Length))));
+                    log(String.Format("PowerShell: {0}", error.Substring(0, Math.Min(200, error.Length))));
             }
             catch (Exception ex)
             {
@@ -673,9 +970,9 @@ _continue_ = ""dns=Win7VirtualMonitor&""
 
                     if (File.Exists(pfxPath))
                     {
-                        // Use PersistKeySet to ensure private key is accessible by SslStream
+                        // Use PersistKeySet + UserKeySet to ensure private key is accessible by SslStream
                         X509Certificate2 cert = new X509Certificate2(pfxPath, CERT_PASSWORD,
-                            X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet);
+                            X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet | X509KeyStorageFlags.UserKeySet);
                         
                         if (cert.HasPrivateKey)
                         {
@@ -759,7 +1056,7 @@ _continue_ = ""dns=Win7VirtualMonitor&""
                         if (File.Exists(pfxFile))
                         {
                             X509Certificate2 cert = new X509Certificate2(pfxFile, CERT_PASSWORD,
-                                X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet);
+                                X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet | X509KeyStorageFlags.UserKeySet);
                             File.Copy(pfxFile, CERT_FILE_PATH, true);
                             log("Certificate created via makecert.");
                             
@@ -830,7 +1127,7 @@ _continue_ = ""dns=Win7VirtualMonitor&""
                 try
                 {
                     return new X509Certificate2(CERT_FILE_PATH, CERT_PASSWORD,
-                        X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet);
+                        X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet | X509KeyStorageFlags.UserKeySet);
                 }
                 catch { }
             }

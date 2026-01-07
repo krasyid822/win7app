@@ -4,3 +4,5 @@ D:\Downloads\Compressed\VSCodeProject\win7app\Win7App\obj\x86\Release\Win7App.cs
 D:\Downloads\Compressed\VSCodeProject\win7app\Win7App\obj\x86\Release\Win7App.exe
 D:\Downloads\Compressed\VSCodeProject\win7app\Win7App\obj\x86\Release\Win7App.pdb
 D:\Downloads\Compressed\VSCodeProject\win7app\Win7App\bin\Release\QRCoder.dll
+D:\Downloads\Compressed\VSCodeProject\win7app\Win7App\bin\Release\BouncyCastle.Cryptography.dll
+D:\Downloads\Compressed\VSCodeProject\win7app\Win7App\bin\Release\BouncyCastle.Cryptography.xml

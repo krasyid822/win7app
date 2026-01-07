@@ -38,6 +38,10 @@
     <Reference Include="System.Windows.Forms" />
   </ItemGroup>
   <ItemGroup>
+    <Reference Include="BouncyCastle.Cryptography">
+      <HintPath>packages\BouncyCastle.Cryptography.2.2.1\lib\net461\BouncyCastle.Cryptography.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
     <Reference Include="QRCoder">
       <HintPath>packages\QRCoder.1.4.3\lib\net40\QRCoder.dll</HintPath>
       <Private>True</Private>

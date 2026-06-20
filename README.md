@@ -2,6 +2,8 @@
 
 Windows 7 (x86) sample app and MSI installer scaffold
 
+![Screenshoot Client-Side](./assets/demo/IMG_20260108_09062492.jpeg)
+
 Prerequisites:
 - Visual Studio 2017/2019 with .NET Framework 4.6.1 support (or MSBuild)
 - WiX Toolset 3.11 (for building the MSI)
